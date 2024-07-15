@@ -1,0 +1,20 @@
+{
+  "name": "@tty-pt/qhash",
+  "version": "0.0.2",
+  "description": "C lib for easy hashtable usage",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo @tty-pt/qhash: No tests",
+    "postinstall": "make"
+  },
+  "keywords": [
+    "hashtable"
+  ],
+  "author": "quirinpa@gmail.com",
+  "license": "BSD-3-Clause",
+  "files": [
+    "*.c",
+    "include",
+    "Makefile"
+  ]
+}
