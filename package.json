@@ -1,6 +1,6 @@
 {
   "name": "@tty-pt/qhash",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "C lib for easy hashtable usage",
   "main": "index.js",
   "scripts": {
@@ -14,6 +14,7 @@
   "license": "BSD-3-Clause",
   "files": [
     "*.c",
+    "qhash.pc",
     "include",
     "Makefile"
   ]
