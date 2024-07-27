@@ -8,7 +8,8 @@
 #include <db.h>
 #endif
 
-#define HASH_DBS_MAX 256
+#define HASH_DBS_MAX 512
+#define HASH_NOT_FOUND NULL
 
 DB *hash_dbs[HASH_DBS_MAX];
 
@@ -24,7 +25,7 @@ hash_init()
 }
 
 void
-hash_put(int hd, void *key_r, size_t key_len, void *data_r)
+hash_put(int hd, void *key_r, size_t key_len, void *value)
 {
 	DB *db = hash_dbs[hd];
 	DBT key, data;
@@ -34,7 +35,7 @@ hash_put(int hd, void *key_r, size_t key_len, void *data_r)
 
 	key.data = (void *) key_r;
 	key.size = key_len;
-	data.data = &data_r;
+	data.data = &value;
 	data.size = sizeof(void *);
 
 	if (db->put(db, NULL, &key, &data, 0))
@@ -57,7 +58,7 @@ hash_get(int hd, void *key_r, size_t key_len)
 	ret = db->get(db, NULL, &key, &data, 0);
 
 	if (ret == DB_NOTFOUND)
-		return NULL;
+		return HASH_NOT_FOUND;
 	else if (ret)
 		err(1, "hash_get");
 

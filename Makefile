@@ -4,7 +4,7 @@ LIBDIR := $(DESTDIR)${PREFIX}/lib
 LD := ${CC}
 
 LDFLAGS := -ldb -L/usr/lib -L/usr/local/lib
-CFLAGS := -Iinclude -I/usr/local/include
+CFLAGS := -g -Iinclude -I/usr/local/include
 lib-LDFLAGS := ${LDFLAGS} -fPIC -shared
 
 libqhash.so: qhash.c include/qhash.h
