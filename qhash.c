@@ -113,26 +113,38 @@ shash_table(unsigned hd, char *table[]) {
 		SHASH_PUT(hd, *t, *t + strlen(*t) + 1);
 }
 
-void
-hash_iter(unsigned hd, hash_cb_t callback, void *arg) {
-	DB *db = hash_dbs[hd];
+struct {
+	DB *db;
 	DBT data, key;
 	DBC *cursor;
-	int ret;
+} c;
 
-	memset(&key, 0, sizeof(DBT));
-	memset(&data, 0, sizeof(DBT));
-	db->cursor(db, NULL, &cursor, 0);
-	while (1)
-		if ((ret = cursor->get(cursor, &key, &data, DB_NEXT))) {
-			if (ret != DB_NOTFOUND)
-				fprintf(stderr, "HASH_ITER: %s\n", db_strerror(ret));
-			cursor->close(cursor);
-			return;
-		} else {
-			callback(key.data, key.size, * (void **) data.data, arg);
-			memset(&data, 0, sizeof(DBT));
-		}
+struct hash_cursor
+hash_iter_start(unsigned hd) {
+	struct hash_cursor cur;
+	c.db = hash_dbs[hd];
+	c.db->cursor(c.db, NULL, &c.cursor, 0);
+	return cur;
+}
+
+void *
+hash_iter_get(struct hash_cursor *cur)
+{
+	int ret;
+	memset(&c.key, 0, sizeof(DBT));
+	memset(&c.data, 0, sizeof(DBT));
+
+	if ((ret = c.cursor->get(c.cursor, &c.key, &c.data, DB_NEXT))) {
+		if (ret != DB_NOTFOUND)
+			fprintf(stderr, "HASH_ITER: %s\n", db_strerror(ret));
+		c.cursor->close(c.cursor);
+		return NULL;
+	} else {
+		cur->key = c.key.data;
+		cur->key_len = c.key.size;
+		cur->data = * (void **) c.data.data;
+		return &c;
+	}
 }
 
 void
