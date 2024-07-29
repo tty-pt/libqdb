@@ -9,13 +9,13 @@
 
 typedef void (*hash_cb_t)(void *key, size_t key_size, void *data, void *arg);
 
-int hash_init();
-void hash_put(int hd, void *key, size_t key_len, void *value);
-void *hash_get(int hd, void *key, size_t key_len);
-void hash_del(int hd, void *key, size_t key_len);
-void shash_table(int hd, char *table[]);
-void hash_iter(int hd, hash_cb_t callback, void *arg);
-void hash_close(int hd);
+unsigned hash_init();
+void hash_put(unsigned hd, void *key, size_t key_len, void *value);
+void *hash_get(unsigned hd, void *key, size_t key_len);
+void hash_del(unsigned hd, void *key, size_t key_len);
+void shash_table(unsigned hd, char *table[]);
+void hash_iter(unsigned hd, hash_cb_t callback, void *arg);
+void hash_close(unsigned hd);
 
 #endif
 
