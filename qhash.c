@@ -53,7 +53,7 @@ hash_init()
 }
 
 void
-hash_put(unsigned hd, void *key_r, size_t key_len, void *value)
+hash_cput(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len)
 {
 	DB *db = hash_dbs[hd];
 	DBT key, data;
@@ -63,15 +63,21 @@ hash_put(unsigned hd, void *key_r, size_t key_len, void *value)
 
 	key.data = (void *) key_r;
 	key.size = key_len;
-	data.data = &value;
-	data.size = sizeof(void *);
+	data.data = value;
+	data.size = value_len;
 
 	if (db->put(db, NULL, &key, &data, 0))
 		err(1, "hash_put");
 }
 
-void *
-hash_get(unsigned hd, void *key_r, size_t key_len)
+void
+hash_put(unsigned hd, void *key_r, size_t key_len, void *value)
+{
+	hash_cput(hd, key_r, key_len, &value, sizeof(void *));
+}
+
+static void *
+_hash_cget(unsigned hd, size_t *value_len, void *key_r, size_t key_len)
 {
 	DB *db = hash_dbs[hd];
 	DBT key, data;
@@ -90,7 +96,31 @@ hash_get(unsigned hd, void *key_r, size_t key_len)
 	else if (ret)
 		err(1, "hash_get");
 
-	return * (void **) data.data;
+	*value_len = data.size;
+	return data.data;
+}
+
+ssize_t
+hash_cget(unsigned hd, void *value_r, void *key_r, size_t key_len)
+{
+	size_t value_len;
+	void *value = _hash_cget(hd, &value_len, key_r, key_len);
+
+	if (!value)
+		return -1;
+
+	memcpy(value_r, value, value_len);
+	return value_len;
+}
+
+void *
+hash_get(unsigned hd, void *key_r, size_t key_len)
+{
+	size_t value_len;
+	void **ret = _hash_cget(hd, &value_len, key_r, key_len);
+	if (!ret)
+		return NULL;
+	return *ret;
 }
 
 void
@@ -143,6 +173,25 @@ hash_iter_get(struct hash_cursor *cur)
 		cur->key = c.key.data;
 		cur->key_len = c.key.size;
 		cur->data = * (void **) c.data.data;
+		return &c;
+	}
+}
+
+void *
+hash_iter_cget(void *key, void *value, struct hash_cursor *cur)
+{
+	int ret;
+	memset(&c.key, 0, sizeof(DBT));
+	memset(&c.data, 0, sizeof(DBT));
+
+	if ((ret = c.cursor->get(c.cursor, &c.key, &c.data, DB_NEXT))) {
+		if (ret != DB_NOTFOUND)
+			fprintf(stderr, "HASH_ITER: %s\n", db_strerror(ret));
+		c.cursor->close(c.cursor);
+		return NULL;
+	} else {
+		memcpy(key, c.key.data, c.key.size);
+		memcpy(value, c.data.data, c.data.size);
 		return &c;
 	}
 }
