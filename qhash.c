@@ -24,9 +24,10 @@ struct free_list_head free_list;
 
 size_t hash_n = 0;
 int hash_first = 1;
+void *txnid = NULL;
 
 unsigned
-hash_init()
+hash_cinit(const char *file, const char *database, int mode)
 {
 	DB **db;
 	struct free_id *new_id = NULL;
@@ -45,11 +46,17 @@ hash_init()
 
 	/* fprintf(stderr, "qhash new! %d\n", id); */
 	db = &hash_dbs[id];
-	if (db_create(db, NULL, 0) || (*db)->open(*db, NULL, NULL, NULL, DB_HASH, DB_CREATE, 0644))
+	if (db_create(db, NULL, 0) || (*db)->open(*db, txnid, file, database, DB_HASH, DB_CREATE, mode))
 		err(1, "hash_init");
 	if (!new_id)
 		hash_n++;
 	return id;
+}
+
+unsigned
+hash_init()
+{
+	return hash_cinit(NULL, NULL, 0644);
 }
 
 void
@@ -66,7 +73,7 @@ hash_cput(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_le
 	data.data = value;
 	data.size = value_len;
 
-	if (db->put(db, NULL, &key, &data, 0))
+	if (db->put(db, txnid, &key, &data, 0))
 		err(1, "hash_put");
 }
 
@@ -89,7 +96,7 @@ _hash_cget(unsigned hd, size_t *value_len, void *key_r, size_t key_len)
 	key.data = (void *) key_r;
 	key.size = key_len;
 
-	ret = db->get(db, NULL, &key, &data, 0);
+	ret = db->get(db, txnid, &key, &data, 0);
 
 	if (ret == DB_NOTFOUND)
 		return HASH_NOT_FOUND;
@@ -133,7 +140,7 @@ hash_del(unsigned hd, void *key_r, size_t len)
 	key.data = key_r;
 	key.size = len;
 
-	if (db->del(db, NULL, &key, 0))
+	if (db->del(db, txnid, &key, 0))
 		err(1, "hash_del");
 }
 
@@ -208,4 +215,10 @@ hash_close(unsigned hd) {
 		new_id->hd = hd;
 		SLIST_INSERT_HEAD(&free_list, new_id, entry);
 	}
+}
+
+void
+hash_sync(unsigned hd) {
+	DB *db = hash_dbs[hd];
+	db->sync(db, 0);
 }

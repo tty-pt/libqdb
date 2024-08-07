@@ -14,6 +14,7 @@ struct hash_cursor {
 	void *data;
 };
 
+unsigned hash_cinit(const char *file, const char *database, int mode);
 unsigned hash_init();
 void hash_put(unsigned hd, void *key, size_t key_len, void *value);
 void hash_cput(unsigned hd, void *key, size_t key_len, void *value, size_t value_len);
@@ -25,6 +26,6 @@ struct hash_cursor hash_iter_start(unsigned hd);
 void *hash_iter_get(struct hash_cursor *cur);
 void hash_close(unsigned hd);
 void *hash_iter_cget(void *key, void *value, struct hash_cursor *cur);
+void hash_sync(unsigned hd);
 
 #endif
-
