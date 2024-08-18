@@ -10,7 +10,7 @@
 #include <db.h>
 #endif
 
-#define HASH_DBS_MAX 512
+#define HASH_DBS_MAX (64 * 512)
 #define HASH_NOT_FOUND NULL
 
 DB *hash_dbs[HASH_DBS_MAX];
