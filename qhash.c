@@ -95,12 +95,6 @@ hash_cput(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_le
 		err(1, "hash_put");
 }
 
-void
-hash_put(unsigned hd, void *key_r, size_t key_len, void *value)
-{
-	hash_cput(hd, key_r, key_len, &value, sizeof(void *));
-}
-
 static void *
 _hash_cget(unsigned hd, size_t *value_len, void *key_r, size_t key_len)
 {
@@ -146,16 +140,6 @@ hash_get(unsigned hd, void *key_r, size_t key_len)
 	if (!ret)
 		return NULL;
 	return ret;
-}
-
-void *
-hash_sget(unsigned hd, void *key_r, size_t key_len)
-{
-	void **ret = hash_get(hd, key_r, key_len);
-	if (ret)
-		return *ret;
-	else
-		return ret;
 }
 
 void
@@ -208,7 +192,7 @@ hash_vdel(unsigned hd, void *key_data, size_t key_size, void *value_data, size_t
 void
 shash_table(unsigned hd, char *table[]) {
 	for (register char **t = table; *t; t++)
-		SHASH_PUT(hd, *t, *t + strlen(*t) + 1);
+		hash_sput(hd, *t, *t + strlen(*t) + 1);
 }
 
 struct hash_internal {
