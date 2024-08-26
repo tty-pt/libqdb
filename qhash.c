@@ -226,6 +226,13 @@ hash_iter(unsigned hd) {
 	return hash_citer(hd, NULL, 0);
 }
 
+void hash_fin(struct hash_cursor *cur) {
+	struct hash_internal *internal = cur->internal;
+	internal->cursor->close(internal->cursor);
+	free(internal);
+	cur->internal = NULL;
+}
+
 ssize_t
 hash_next(void *key, void *value, struct hash_cursor *cur)
 {

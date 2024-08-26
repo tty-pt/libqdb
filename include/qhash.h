@@ -26,6 +26,7 @@ struct hash_cursor hash_citer(unsigned hd, void *key, size_t key_len);
 struct hash_cursor hash_iter(unsigned hd);
 void hash_close(unsigned hd);
 ssize_t hash_next(void *key, void *value, struct hash_cursor *cur);
+void hash_fin(struct hash_cursor *cur);
 void hash_sync(unsigned hd);
 
 static inline void hash_put(unsigned hd, void *key_r, size_t key_len, void *value) {
