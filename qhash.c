@@ -18,13 +18,8 @@ enum qhash_priv_flags {
 };
 
 DB *hash_dbs[HASH_DBS_MAX];
-struct free_id {
-	unsigned hd;
-	SLIST_ENTRY(free_id) entry;
-};
 
-SLIST_HEAD(free_list_head, free_id);
-struct free_list_head free_list;
+struct free_list free_list;
 
 size_t hash_n = 0;
 int hash_first = 1;
@@ -34,7 +29,7 @@ unsigned
 hash_cinit(const char *file, const char *database, int mode, int flags)
 {
 	DB **db;
-	struct free_id *new_id = NULL;
+	struct unsigned_item *new_id = NULL;
 	unsigned id = hash_n;
 
 	if (hash_first) {
@@ -43,7 +38,7 @@ hash_cinit(const char *file, const char *database, int mode, int flags)
 	} else {
 		new_id = SLIST_FIRST(&free_list);
 		if (new_id) {
-			id = new_id->hd;
+			id = new_id->value;
 			SLIST_REMOVE_HEAD(&free_list, entry);
 		}
 	}
@@ -63,12 +58,6 @@ hash_cinit(const char *file, const char *database, int mode, int flags)
 	if (!new_id)
 		hash_n++;
 	return id;
-}
-
-unsigned
-hash_init()
-{
-	return hash_cinit(NULL, NULL, 0644, 0);
 }
 
 void
@@ -221,11 +210,6 @@ hash_citer(unsigned hd, void *key, size_t key_len) {
 	return cur;
 }
 
-struct hash_cursor
-hash_iter(unsigned hd) {
-	return hash_citer(hd, NULL, 0);
-}
-
 void hash_fin(struct hash_cursor *cur) {
 	struct hash_internal *internal = cur->internal;
 	internal->cursor->close(internal->cursor);
@@ -272,8 +256,8 @@ hash_close(unsigned hd) {
 		hash_n --;
 	else {
 
-		struct free_id *new_id = malloc(sizeof(struct free_id));
-		new_id->hd = hd;
+		struct unsigned_item *new_id = malloc(sizeof(struct unsigned_item));
+		new_id->value = hd;
 		SLIST_INSERT_HEAD(&free_list, new_id, entry);
 	}
 }
@@ -282,4 +266,36 @@ void
 hash_sync(unsigned hd) {
 	DB *db = hash_dbs[hd];
 	db->sync(db, 0);
+}
+
+struct lhash lhash_cinit(const char *file, const char *database, int mode, int flags) {
+	struct lhash lhash;
+	SLIST_INIT(&lhash.free);
+	lhash.last = 0;
+	lhash.hd = hash_cinit(file, database, mode, flags);
+	return lhash;
+}
+
+void lhash_del(struct lhash *lhash, unsigned id) {
+	if (id + 1 == lhash->last)
+		lhash->last--;
+	else {
+		struct unsigned_item *new_item = malloc(sizeof(struct unsigned_item));
+		hash_del(lhash->hd, &id, sizeof(id));
+		new_item->value = id;
+		SLIST_INSERT_HEAD(&lhash->free, new_item, entry);
+	}
+}
+
+unsigned lhash_new(struct lhash *lhash, void *value, size_t value_len) {
+	struct unsigned_item *free_item = SLIST_FIRST(&lhash->free);
+	if (free_item) {
+		unsigned ret = free_item->value;
+		SLIST_REMOVE_HEAD(&lhash->free, entry);
+		lhash_set(lhash, ret, value, value_len);
+		return ret;
+	} else {
+		lhash_set(lhash, lhash->last, value, value_len);
+		return lhash->last++;
+	}
 }
