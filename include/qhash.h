@@ -51,7 +51,7 @@
 	} \
 	unsigned name ## _next(struct hash_cursor *c) { \
 		unsigned key, value; \
-		return hash_next(&key, &value, c) ? value : -1; \
+		return hash_next(&key, &value, c) >= 0 ? value : -1; \
 	} \
 	void name ## _remove(unsigned cont_ref, unsigned item_ref) { \
 		hash_vdel(name ## _ahd, &cont_ref, sizeof(cont_ref), &item_ref, sizeof(item_ref)); \

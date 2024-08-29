@@ -17,12 +17,12 @@ enum qhash_priv_flags {
 	QH_NOT_FIRST = 1,
 };
 
-DB *hash_dbs[HASH_DBS_MAX];
+static DB *hash_dbs[HASH_DBS_MAX];
 
 struct free_list free_list;
 
-size_t hash_n = 0;
-int hash_first = 1;
+static unsigned hash_n = 0;
+static int hash_first = 1;
 void *txnid = NULL;
 
 unsigned
@@ -57,6 +57,7 @@ hash_cinit(const char *file, const char *database, int mode, int flags)
 
 	if (!new_id)
 		hash_n++;
+
 	return id;
 }
 
@@ -76,7 +77,8 @@ hash_cput(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_le
 	data.size = value_len;
 	int flags, dupes;
 
-	db->get_flags(db, &flags);
+	if (db->get_flags(db, &flags))
+		err(1, "hash_put get_flags");
 	dupes = flags & DB_DUP;
 
 	ret = db->put(db, txnid, &key, &data, 0);
@@ -237,12 +239,14 @@ hash_next(void *key, void *value, struct hash_cursor *cur)
 		internal->cursor->close(internal->cursor);
 		free(internal);
 		cur->internal = NULL;
-		return 0;
+		return -1;
 	} else {
 		ret = internal->key.size;
-		memcpy(key, internal->key.data, internal->key.size);
+		if (!(cur->flags & QH_DUP)) {
+			memcpy(key, internal->key.data, internal->key.size);
+			memset(&internal->key, 0, sizeof(DBT));
+		}
 		memcpy(value, internal->data.data, internal->data.size);
-		memset(&internal->key, 0, sizeof(DBT));
 		memset(&internal->data, 0, sizeof(DBT));
 		return ret;
 	}
