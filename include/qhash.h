@@ -6,13 +6,20 @@
 #include <sys/queue.h>
 #include <string.h>
 
+typedef void lhash_init_t();
+typedef struct hash_cursor lhash_iter_t();
+
 #define LHASH_DECL(name, type) \
-	void name ## _init(); \
-	unsigned name ## _new(type *name); \
-	type name ## _get(unsigned ref); \
-	void name ## _set(unsigned ref, type *name); \
-	struct hash_cursor name ## _iter(); \
-	unsigned name ## _next(type *name, struct hash_cursor *c);
+	lhash_init_t name ## _init; \
+	typedef unsigned name ## _new_t(type *name); \
+	name ## _new_t name ## _new; \
+	typedef type name ## _get_t(unsigned ref); \
+	name ## _get_t name ## _get; \
+	typedef void name ## _set_t(unsigned ref, type *name); \
+	name ## _set_t name ## _set; \
+	lhash_iter_t name ## _iter; \
+	typedef unsigned name ## _next_t(type *name, struct hash_cursor *c); \
+	name ## _next_t name ## _next;
 
 #define LHASH_DEF(name, type) \
 	struct lhash name ## _lhash; \
@@ -35,11 +42,16 @@
 		return hash_next(&ref, name, c) > 0 ? ref : -1; \
 	}
 
+typedef void alhash_add_t(unsigned cont_ref, unsigned item_ref);
+typedef struct hash_cursor alhash_iter_t(unsigned cont_ref);
+typedef unsigned alhash_next_t(struct hash_cursor *c);
+typedef void alhash_remove_t(unsigned cont_ref, unsigned item_ref);
+
 #define LHASH_ASSOC_DECL(name, cont_name, item_name) \
-	void name ## _add(unsigned cont_ref, unsigned item_ref); \
-	struct hash_cursor name ## _iter(unsigned cont_ref); \
-	unsigned name ## _next(struct hash_cursor *c); \
-	void name ## _remove(unsigned cont_ref, unsigned item_ref);
+	alhash_add_t name ## _add; \
+	alhash_iter_t name ## _iter; \
+	alhash_next_t name ## _next; \
+	alhash_remove_t name ## _remove;
 
 #define LHASH_ASSOC_DEF(name, cont_name, item_name) \
 	unsigned name ## _ahd; \
