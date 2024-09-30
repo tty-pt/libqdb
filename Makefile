@@ -1,14 +1,8 @@
 PREFIX ?= /usr/local
 LIBDIR := $(DESTDIR)${PREFIX}/lib
 
-LD := ${CC}
-
-LDFLAGS := -ldb -L/usr/lib -L/usr/local/lib
-CFLAGS := -g -Iinclude -I/usr/local/include
-lib-LDFLAGS := ${LDFLAGS} -fPIC -shared
-
 libqhash.so: qhash.c include/qhash.h
-	${CC} -o $@ qhash.c ${CFLAGS} ${lib-LDFLAGS}
+	${CC} -o $@ qhash.c -g -O3 -fPIC -shared
 
 install: libqhash.so
 	install -d ${DESTDIR}${PREFIX}/lib/pkgconfig

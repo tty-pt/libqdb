@@ -1,4 +1,4 @@
-#include "qhash.h"
+#include "./include/qhash.h"
 #include <err.h>
 #include <string.h>
 #include <sys/queue.h>
@@ -17,54 +17,18 @@ enum qhash_priv_flags {
 	QH_NOT_FIRST = 1,
 };
 
-static DB *hash_dbs[HASH_DBS_MAX];
+static DB *hash_dbs[HASH_DBS_MAX], *ids_db;
+static assoc_t assoc[HASH_DBS_MAX];
 
-struct free_list free_list;
+static struct idm idm;
 
 static unsigned hash_n = 0;
 static int hash_first = 1;
 void *txnid = NULL;
 
-unsigned
-hash_cinit(const char *file, const char *database, int mode, int flags)
+static inline void
+_hash_put(DB *db, void *key_r, size_t key_len, void *value, size_t value_len)
 {
-	DB **db;
-	struct unsigned_item *new_id = NULL;
-	unsigned id = hash_n;
-
-	if (hash_first) {
-		SLIST_INIT(&free_list);
-		hash_first = 0;
-	} else {
-		new_id = SLIST_FIRST(&free_list);
-		if (new_id) {
-			id = new_id->value;
-			SLIST_REMOVE_HEAD(&free_list, entry);
-		}
-	}
-
-	/* fprintf(stderr, "qhash new! %d\n", id); */
-	db = &hash_dbs[id];
-	if (db_create(db, NULL, 0))
-		err(1, "hash_init: db_create");
-
-	if (flags & QH_DUP)
-		if ((*db)->set_flags(*db, DB_DUPSORT))
-			err(1, "hash_init: set_flags");
-
-	if ((*db)->open(*db, txnid, file, database, DB_HASH, DB_CREATE, mode))
-		err(1, "hash_init");
-
-	if (!new_id)
-		hash_n++;
-
-	return id;
-}
-
-void
-hash_cput(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len)
-{
-	DB *db = hash_dbs[hd];
 	DBT key, data;
 	int ret;
 
@@ -86,10 +50,50 @@ hash_cput(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_le
 		err(1, "hash_put");
 }
 
-static void *
-_hash_cget(unsigned hd, size_t *value_len, void *key_r, size_t key_len)
+unsigned
+hash_cinit(const char *file, const char *database, int mode, int flags)
+{
+	DB *db;
+	unsigned id;
+
+	if (hash_first) {
+		idm = idm_init();
+		if (db_create(&ids_db, NULL, 0))
+			err(1, "hash_init: db_create ids_db");
+
+		if (ids_db->open(ids_db, txnid, NULL, NULL, DB_HASH, DB_CREATE, 644))
+			err(1, "hash_init: open ids_db");
+	}
+
+	hash_first = 0;
+	id = idm_new(&idm);
+
+	if (db_create(&hash_dbs[id], NULL, 0))
+		err(1, "hash_init: db_create");
+
+	// this is needed for associations
+	db = hash_dbs[id];
+	_hash_put(ids_db, &db, sizeof(DB *), &id, sizeof(unsigned));
+
+	if (flags & QH_DUP)
+		if (db->set_flags(db, DB_DUPSORT))
+			err(1, "hash_init: set_flags");
+
+	if (db->open(db, txnid, file, database, DB_HASH, DB_CREATE, mode))
+		err(1, "hash_init: open");
+
+	return id;
+}
+
+void
+hash_put(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len)
 {
 	DB *db = hash_dbs[hd];
+	_hash_put(db, key_r, key_len, value, value_len);
+}
+
+static inline int _hash_get(DB *db, void *value_r, void *key_r, size_t key_len)
+{
 	DBT key, data;
 	int ret;
 
@@ -102,35 +106,62 @@ _hash_cget(unsigned hd, size_t *value_len, void *key_r, size_t key_len)
 	ret = db->get(db, txnid, &key, &data, 0);
 
 	if (ret == DB_NOTFOUND)
-		return HASH_NOT_FOUND;
+		return 1;
 	else if (ret)
 		err(1, "hash_get");
 
-	*value_len = data.size;
-	return data.data;
+	memcpy(value_r, data.data, data.size);
+	return 0;
 }
 
-ssize_t
-hash_cget(unsigned hd, void *value_r, void *key_r, size_t key_len)
+int hash_get(unsigned hd, void *value_r, void *key_r, size_t key_len)
 {
-	size_t value_len;
-	void *value = _hash_cget(hd, &value_len, key_r, key_len);
-
-	if (!value)
-		return -1;
-
-	memcpy(value_r, value, value_len);
-	return value_len;
+	DB *db = hash_dbs[hd];
+	return _hash_get(db, value_r, key_r, key_len);
 }
 
-void *
-hash_get(unsigned hd, void *key_r, size_t key_len)
+int hash_pget(unsigned hd, void *pkey_r, void *key_r, size_t key_len) {
+	DB *db = hash_dbs[hd];
+	DBT key, pkey, data;
+	int ret;
+
+	memset(&key, 0, sizeof(key));
+	memset(&pkey, 0, sizeof(pkey));
+	memset(&data, 0, sizeof(data));
+
+	key.data = (void *) key_r;
+	key.size = key_len;
+
+	ret = db->pget(db, txnid, &key, &pkey, &data, 0);
+
+	if (ret == DB_NOTFOUND)
+		return 1;
+	else if (ret)
+		err(1, "hash_get");
+
+	memcpy(pkey_r, pkey.data, pkey.size);
+	return 0;
+}
+
+int
+map_assoc(DB *sec, const DBT *key, const DBT *data, DBT *result)
 {
-	size_t value_len;
-	void *ret = _hash_cget(hd, &value_len, key_r, key_len);
-	if (!ret)
-		return NULL;
-	return ret;
+	memset(result, 0, sizeof(DBT));
+	unsigned hd;
+	_hash_get(ids_db, &hd, &sec, sizeof(DB *)); // assumed == 0
+	assoc[hd](&result->data, &result->size, key->data, data->data);
+	return 0;
+}
+
+void
+hash_assoc(unsigned hd, unsigned link, assoc_t cb)
+{
+	DB *db = hash_dbs[hd];
+	DB *ldb = hash_dbs[link];
+	assoc[hd] = cb;
+
+	if (ldb->associate(ldb, NULL, db, map_assoc, DB_CREATE | DB_IMMUTABLE_KEY))
+		err(1, "hash_assoc");
 }
 
 void
@@ -183,25 +214,24 @@ hash_vdel(unsigned hd, void *key_data, size_t key_size, void *value_data, size_t
 void
 shash_table(unsigned hd, char *table[]) {
 	for (register char **t = table; *t; t++)
-		hash_sput(hd, *t, *t + strlen(*t) + 1);
+		hash_put(hd, *t, strlen(*t), *t + strlen(*t) + 1, sizeof(*t));
 }
 
 struct hash_internal {
 	unsigned hd;
-	DB *db;
 	DBT data, key;
 	DBC *cursor;
 };
 
 struct hash_cursor
-hash_citer(unsigned hd, void *key, size_t key_len) {
+hash_iter(unsigned hd, void *key, size_t key_len) {
 	struct hash_cursor cur;
 	struct hash_internal *internal = malloc(sizeof(struct hash_internal));
 	cur.internal = internal;
 	internal->hd = hd;
-	internal->db = hash_dbs[hd];
+	DB *db = hash_dbs[hd];
 	internal->cursor = NULL;
-	internal->db->cursor(internal->db, NULL, &internal->cursor, 0);
+	db->cursor(db, NULL, &internal->cursor, 0);
 	memset(&internal->key, 0, sizeof(DBT));
 	memset(&internal->data, 0, sizeof(DBT));
 	internal->key.data = key;
@@ -219,7 +249,7 @@ void hash_fin(struct hash_cursor *cur) {
 	cur->internal = NULL;
 }
 
-ssize_t
+int
 hash_next(void *key, void *value, struct hash_cursor *cur)
 {
 	struct hash_internal *internal = cur->internal;
@@ -239,31 +269,42 @@ hash_next(void *key, void *value, struct hash_cursor *cur)
 		internal->cursor->close(internal->cursor);
 		free(internal);
 		cur->internal = NULL;
-		return -1;
+		return 0;
 	} else {
-		ret = internal->key.size;
-		if (!(cur->flags & QH_DUP)) {
-			memcpy(key, internal->key.data, internal->key.size);
-			memset(&internal->key, 0, sizeof(DBT));
-		}
+		memcpy(key, internal->key.data, internal->key.size);
+		memset(&internal->key, 0, sizeof(DBT));
 		memcpy(value, internal->data.data, internal->data.size);
 		memset(&internal->data, 0, sizeof(DBT));
-		return ret;
+		return 1;
 	}
 }
 
+int hash_drop(unsigned hd) {
+	DB *db = hash_dbs[hd];
+	DBT key, data;
+	DBC *cursor;
+	int ret, flags = DB_FIRST;
+
+	if ((ret = db->cursor(db, txnid, &cursor, 0)) != 0) {
+		fprintf(stderr, "hash_drop: cursor: %s\n", db_strerror(ret));
+		return ret;
+	}
+
+	memset(&key, 0, sizeof(DBT));
+	memset(&data, 0, sizeof(DBT));
+
+	while (!(cursor->get(cursor, &key, &data, flags))) {
+		flags = DB_NEXT;
+		cursor->del(cursor, 0);
+	}
+
+	cursor->close(cursor);
+}
 void
 hash_close(unsigned hd) {
 	DB *db = hash_dbs[hd];
 	db->close(db, 0);
-	if (hd == hash_n - 1)
-		hash_n --;
-	else {
-
-		struct unsigned_item *new_id = malloc(sizeof(struct unsigned_item));
-		new_id->value = hd;
-		SLIST_INSERT_HEAD(&free_list, new_id, entry);
-	}
+	idm_del(&idm, hd);
 }
 
 void
@@ -272,34 +313,29 @@ hash_sync(unsigned hd) {
 	db->sync(db, 0);
 }
 
-struct lhash lhash_cinit(const char *file, const char *database, int mode, int flags) {
-	struct lhash lhash;
-	SLIST_INIT(&lhash.free);
-	lhash.last = 0;
-	lhash.hd = hash_cinit(file, database, mode, flags);
-	return lhash;
+void idml_push(struct idm_list *list, unsigned id) {
+	struct idm_item *item = malloc(sizeof(struct idm_item));
+	item->value = id;
+	SLIST_INSERT_HEAD(list, item, entry);
 }
 
-void lhash_del(struct lhash *lhash, unsigned id) {
-	if (id + 1 == lhash->last)
-		lhash->last--;
-	else {
-		struct unsigned_item *new_item = malloc(sizeof(struct unsigned_item));
-		hash_del(lhash->hd, &id, sizeof(id));
-		new_item->value = id;
-		SLIST_INSERT_HEAD(&lhash->free, new_item, entry);
-	}
+unsigned idml_pop(struct idm_list *list) {
+	struct idm_item *popped = SLIST_FIRST(list);
+
+	if (!popped)
+		return -1;
+
+	unsigned ret = popped->value;
+	SLIST_REMOVE_HEAD(list, entry);
+	free(popped);
+	return ret;
 }
 
-unsigned lhash_new(struct lhash *lhash, void *value, size_t value_len) {
-	struct unsigned_item *free_item = SLIST_FIRST(&lhash->free);
-	if (free_item) {
-		unsigned ret = free_item->value;
-		SLIST_REMOVE_HEAD(&lhash->free, entry);
-		lhash_set(lhash, ret, value, value_len);
-		return ret;
-	} else {
-		lhash_set(lhash, lhash->last, value, value_len);
-		return lhash->last++;
-	}
+unsigned idm_new(struct idm *idm) {
+	unsigned ret = idml_pop(&idm->free);
+
+	if (ret == (unsigned) -1)
+		return idm->last++;
+
+	return ret;
 }
