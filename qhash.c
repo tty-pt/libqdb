@@ -19,6 +19,8 @@ enum qhash_priv_flags {
 
 static DB *hash_dbs[HASH_DBS_MAX], *ids_db;
 static assoc_t assoc[HASH_DBS_MAX];
+static struct idm lh_idms[HASH_DBS_MAX];
+size_t lh_lengths[HASH_DBS_MAX];
 
 static struct idm idm;
 
@@ -63,6 +65,8 @@ hash_cinit(const char *file, const char *database, int mode, int flags)
 
 		if (ids_db->open(ids_db, txnid, NULL, NULL, DB_HASH, DB_CREATE, 644))
 			err(1, "hash_init: open ids_db");
+
+		memset(lh_lengths, 0, sizeof(lh_lengths));
 	}
 
 	hash_first = 0;
@@ -92,7 +96,7 @@ hash_put(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len
 	_hash_put(db, key_r, key_len, value, value_len);
 }
 
-static inline int _hash_get(DB *db, void *value_r, void *key_r, size_t key_len)
+static inline void * __hash_get(DB *db, size_t *size, void *key_r, size_t key_len)
 {
 	DBT key, data;
 	int ret;
@@ -106,11 +110,23 @@ static inline int _hash_get(DB *db, void *value_r, void *key_r, size_t key_len)
 	ret = db->get(db, txnid, &key, &data, 0);
 
 	if (ret == DB_NOTFOUND)
-		return 1;
+		return NULL;
 	else if (ret)
 		err(1, "hash_get");
 
-	memcpy(value_r, data.data, data.size);
+	*size = data.size;
+	return data.data;
+}
+
+static inline int _hash_get(DB *db, void *value_r, void *key_r, size_t key_len)
+{
+	size_t size;
+	void *value = __hash_get(db, &size, key_r, key_len);
+
+	if (!value)
+		return 1;
+
+	memcpy(value_r, value, size);
 	return 0;
 }
 
@@ -118,6 +134,17 @@ int hash_get(unsigned hd, void *value_r, void *key_r, size_t key_len)
 {
 	DB *db = hash_dbs[hd];
 	return _hash_get(db, value_r, key_r, key_len);
+}
+
+int hash_exists(unsigned hd, void *key_r, size_t key_len)
+{
+	DB *db = hash_dbs[hd];
+	size_t size;
+
+	if (__hash_get(db, &size, key_r, key_len))
+		return 1;
+
+	return 0;
 }
 
 int hash_pget(unsigned hd, void *pkey_r, void *key_r, size_t key_len) {
@@ -211,12 +238,6 @@ hash_vdel(unsigned hd, void *key_data, size_t key_size, void *value_data, size_t
 	return ret == DB_NOTFOUND ? 0 : ret;
 }
 
-void
-shash_table(unsigned hd, char *table[]) {
-	for (register char **t = table; *t; t++)
-		hash_put(hd, *t, strlen(*t), *t + strlen(*t) + 1, sizeof(*t));
-}
-
 struct hash_internal {
 	unsigned hd;
 	DBT data, key;
@@ -299,7 +320,9 @@ int hash_drop(unsigned hd) {
 	}
 
 	cursor->close(cursor);
+	return 0;
 }
+
 void
 hash_close(unsigned hd) {
 	DB *db = hash_dbs[hd];
@@ -338,4 +361,26 @@ unsigned idm_new(struct idm *idm) {
 		return idm->last++;
 
 	return ret;
+}
+
+unsigned lhash_cinit(size_t item_len, const char *file, const char *database, int mode) {
+	unsigned hd = hash_cinit(file, database, mode, 0);
+	lh_idms[hd] = idm_init();
+	lh_lengths[hd] = item_len;
+	return hd;
+}
+
+unsigned lhash_new(unsigned hd, void *item) {
+	unsigned id = idm_new(&lh_idms[hd]);
+	uhash_put(hd, id, item, lh_lengths[hd]);
+	return id;
+}
+
+void lhash_del(unsigned hd, unsigned ref) {
+	idm_del(&lh_idms[hd], ref);
+	uhash_del(hd, ref);
+}
+
+void lhash_put(unsigned hd, unsigned ref, void *source) {
+	uhash_put(hd, ref, source, lh_lengths[hd]);
 }

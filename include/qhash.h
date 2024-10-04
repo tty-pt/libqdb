@@ -7,6 +7,8 @@
 #include <string.h>
 #include <stdint.h>
 
+#define fhash_iter(hd, thing) hash_iter(hd, &thing, sizeof(thing))
+
 /* ID MANAGEMENT UNIT */
 
 struct idm_item {
@@ -83,6 +85,9 @@ void hash_put(unsigned hd, void *key, size_t key_len, void *value, size_t value_
 /* get a value from a hash */
 int hash_get(unsigned hd, void *value, void *key, size_t key_len);
 
+/* check if hash key exists */
+int hash_exists(unsigned hd, void *key, size_t key_len);
+
 /* get a primary key from a secondary hash key */
 int hash_pget(unsigned hd, void *pkey, void *key, size_t key_len);
 
@@ -124,6 +129,11 @@ static inline int uhash_get(unsigned hd, void *target, unsigned ref) {
 	return hash_get(hd, target, &ref, sizeof(ref));
 }
 
+/* check if uhash key exists */
+static inline int uhash_exists(unsigned hd, unsigned ref) {
+	return hash_exists(hd, &ref, sizeof(ref));
+}
+
 /* get a primary key from a secondary hash key */
 static inline int uhash_pget(unsigned hd, void *pkey, unsigned ref) {
 	return hash_pget(hd, pkey, &ref, sizeof(ref));
@@ -145,11 +155,6 @@ uhash_vdel(unsigned hd, unsigned key, void *value_data, size_t value_size) {
 	return hash_vdel(hd, &key, sizeof(key), value_data, value_size);
 }
 
-/* starting iterating a uhash */
-static inline struct hash_cursor uhash_iter(unsigned hd, unsigned key) {
-	return hash_iter(hd, &key, sizeof(key));
-}
-
 /*
  * MANAGED ID HASH TABLE (LHASH)
  * a hash table with items of fixed size
@@ -157,41 +162,31 @@ static inline struct hash_cursor uhash_iter(unsigned hd, unsigned key) {
  * 1-1
  */
 
-struct lhash {
-	struct idm idm;
-	unsigned hd;
-	size_t item_len;
-};
-
 /* initialize a lhash (generic) */
-static inline struct lhash lhash_cinit(size_t item_len, const char *file, const char *database, int mode) {
-	struct lhash lhash;
-	lhash.idm = idm_init();
-	lhash.hd = hash_cinit(file, database, mode, 0);
-	lhash.item_len = item_len;
-	return lhash;
-}
+unsigned lhash_cinit(size_t item_len, const char *file, const char *database, int mode);
 
 /* initialize a memory-only lhash */
-static inline struct lhash lhash_init(size_t item_len) {
+static inline unsigned lhash_init(size_t item_len) {
 	return lhash_cinit(item_len, NULL, NULL, 0644);
 }
 
 /* add an item to a lhash */
-static inline unsigned lhash_new(struct lhash *lhash, void *item) {
-	unsigned id = idm_new(&lhash->idm);
-	uhash_put(lhash->hd, id, item, lhash->item_len);
-	return id;
-}
+unsigned lhash_new(unsigned hd, void *item);
 
 /* get an item from an lhash */
-static inline int lhash_get(struct lhash *lhash, void *target, unsigned ref) {
-	return uhash_get(lhash->hd, target, ref);
+static inline int lhash_get(unsigned hd, void *target, unsigned ref) {
+	return uhash_get(hd, target, ref);
 }
 
-/* set an lhash key's value */
-static inline void lhash_put(struct lhash *lhash, void *source, unsigned ref) {
-	uhash_put(lhash->hd, ref, source, lhash->item_len);
+/* set an lhash item */
+void lhash_put(unsigned hd, unsigned ref, void *source);
+
+/* delete lhash item */
+void lhash_del(unsigned hd, unsigned ref);
+
+/* iterate through lhash */
+static inline struct hash_cursor lhash_iter(unsigned hd) {
+	return hash_iter(hd, NULL, 0);
 }
 
 /*
@@ -203,7 +198,7 @@ static inline void lhash_put(struct lhash *lhash, void *source, unsigned ref) {
  */
 
 /* initialize ahash */
-static inline unsigned ahash_init(unsigned ahd) {
+static inline unsigned ahash_init() {
 	return hash_cinit(NULL, NULL, 0644, QH_DUP);
 }
 
@@ -215,6 +210,12 @@ static inline void ahash_add(unsigned ahd, unsigned container, unsigned item) {
 /* remove an association */
 static inline void ahash_remove(unsigned ahd, unsigned container, unsigned item) {
 	uhash_vdel(ahd, container, &item, sizeof(item));
+}
+
+/* get next value from hash iteration */
+static inline int ahash_next(void *value, struct hash_cursor *cur) {
+	unsigned ign;
+	return hash_next(&ign, value, cur);
 }
 
 /*
@@ -234,15 +235,15 @@ static inline ssize_t shash_get(unsigned hd, void *value, char *key) {
 	return hash_get(hd, value, key, strlen(key) + 1);
 }
 
+/* check if shash key exists */
+static inline int shash_exists(unsigned hd, char *key) {
+	return hash_exists(hd, key, strlen(key) + 1);
+}
+
 /* delete a value from an shash */
 static inline void shash_del(unsigned hd, char *key) {
 	hash_del(hd, key, strlen(key) + 1);
 }
-
-/* initialize a string to string database based on
- * a table. Each item is a string that has a NULL-terminating
- * character in-between key and value */
-void shash_table(unsigned hd, char *table[]);
 
 /* start iterating on a hash table (maybe within a certain key) */
 static inline struct hash_cursor shash_iter(unsigned hd, char *key) {
@@ -270,6 +271,36 @@ static inline void suhash_put(unsigned hd, char *key, unsigned value) {
 /* put a value into a shash */
 static inline void sphash_put(unsigned hd, char *key, void *value) {
 	shash_put(hd, key, value, sizeof(value));
+}
+
+/*
+ * STRING TO STRING HASH TABLE (SSHASH)
+ */
+
+static inline void sshash_put(unsigned hd, char *key, char *value) {
+	hash_put(hd, key, strlen(key) + 1, value, strlen(value) + 1);
+}
+
+/* AUTO TABLES */
+
+/* initialize a string to string table \0 between key and value */
+static inline void
+shash_table(unsigned hd, char *table[]) {
+	for (char **t = table; *t; t++)
+		shash_put(hd, *t, *t + strlen(*t) + 1, sizeof(*t));
+}
+
+/* initialize a string to unsigned index table. */
+static inline void
+suhash_table(int hd, char *table[]) {
+	for (unsigned i = 0; table[i]; i++) {
+		char *str = table[i];
+		size_t len = strlen(str);
+		suhash_put(hd, str, i);
+		str += len + 1;
+		if (*str)
+			suhash_put(hd, str, i);
+	}
 }
 
 #endif
