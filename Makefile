@@ -18,7 +18,7 @@ install: libqhash.so
 
 install-bin: qhash
 	install -d ${DESTDIR}${PREFIX}/bin
-	install -m 644 qhash $(DESTDIR)${PREFIX}/bin
+	install -m 755 qhash $(DESTDIR)${PREFIX}/bin
 
 clean:
 	rm qhash libqhash.so || true

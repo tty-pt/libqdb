@@ -111,12 +111,17 @@ main(int argc, char *argv[])
 				break;
 			}
 			if (reverse) {
-				fprintf(stderr, "reverse deleting in mode 0 is not supported\n");
-				return EXIT_FAILURE;
+				shash_get(rhd, &tmp_id, optarg);
+				lhash_del(hd, tmp_id);
+				printf("%u\n", tmp_id);
+				break;
 			}
 
-			shash_get(rhd, &tmp_id, optarg);
+			tmp_id = strtoul(optarg, NULL, 10);
+			lhash_get(hd, key_buf, tmp_id);
+			shash_del(rhd, key_buf);
 			lhash_del(hd, tmp_id);
+			printf("%s\n", key_buf);
 			break;
 
 		case 'g':
@@ -128,14 +133,14 @@ main(int argc, char *argv[])
 			}
 
 			if (reverse) {
-				ign = strtoul(optarg, NULL, 10);
-				uhash_get(hd, &key_buf, ign);
-				printf("%s\n", key_buf);
+				shash_get(rhd, &tmp_id, optarg);
+				printf("%u\n", tmp_id);
 				break;
 			}
 
-			shash_get(rhd, &tmp_id, optarg);
-			printf("%u\n", tmp_id);
+			ign = strtoul(optarg, NULL, 10);
+			uhash_get(hd, &key_buf, ign);
+			printf("%s\n", key_buf);
 			break;
 
 		case 'r':
