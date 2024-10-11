@@ -364,15 +364,35 @@ unsigned idm_new(struct idm *idm) {
 }
 
 unsigned lhash_cinit(size_t item_len, const char *file, const char *database, int mode) {
-	unsigned hd = hash_cinit(file, database, mode, 0);
-	lh_idms[hd] = idm_init();
+	unsigned hd = hash_cinit(file, database, mode, 0), last;
+	unsigned ign;
+	lh_idms[hd].last = 0;
+	uhash_get(hd, &lh_idms[hd].last, (unsigned) -1);
 	lh_lengths[hd] = item_len;
+	uhash_put(hd, (unsigned) -1, &lh_idms[hd].last, sizeof(unsigned));
+	SLIST_INIT(&lh_idms[hd].free);
+
+	for (last = 0; last < lh_idms[hd].last; last++)
+		if (uhash_get(hd, &ign, last))
+			idml_push(&lh_idms[hd].free, last);
+
 	return hd;
+}
+
+static unsigned lh_len(unsigned hd, char *item) {
+	size_t len = lh_lengths[hd];
+
+	if (len != 0)
+		return len;
+
+	return strlen(item) + 1;
 }
 
 unsigned lhash_new(unsigned hd, void *item) {
 	unsigned id = idm_new(&lh_idms[hd]);
-	uhash_put(hd, id, item, lh_lengths[hd]);
+	uhash_put(hd, id, item, lh_len(hd, item));
+	uhash_del(hd, (unsigned) -1);
+	uhash_put(hd, (unsigned) -1, &lh_idms[hd].last, sizeof(unsigned));
 	return id;
 }
 
@@ -381,6 +401,6 @@ void lhash_del(unsigned hd, unsigned ref) {
 	uhash_del(hd, ref);
 }
 
-void lhash_put(unsigned hd, unsigned ref, void *source) {
-	uhash_put(hd, ref, source, lh_lengths[hd]);
+void lhash_put(unsigned hd, unsigned id, void *source) {
+	uhash_put(hd, id, source, lh_len(hd, source));
 }

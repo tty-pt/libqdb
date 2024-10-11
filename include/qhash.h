@@ -184,9 +184,17 @@ void lhash_put(unsigned hd, unsigned ref, void *source);
 /* delete lhash item */
 void lhash_del(unsigned hd, unsigned ref);
 
-/* iterate through lhash */
+/* start iterating through lhash */
 static inline struct hash_cursor lhash_iter(unsigned hd) {
 	return hash_iter(hd, NULL, 0);
+}
+
+/* iterate through lhash */
+static inline int lhash_next(unsigned *key, void *value, struct hash_cursor *cur) {
+	int ret = hash_next(key, value, cur);
+	if (ret && *key == (unsigned) -1)
+		ret = hash_next(key, value, cur);
+	return ret;
 }
 
 /*
@@ -198,8 +206,13 @@ static inline struct hash_cursor lhash_iter(unsigned hd) {
  */
 
 /* initialize ahash */
+static inline unsigned ahash_cinit(char *fname, char *dbname, int mode) {
+	return hash_cinit(fname, dbname, mode, QH_DUP);
+}
+
+/* initialize ahash */
 static inline unsigned ahash_init() {
-	return hash_cinit(NULL, NULL, 0644, QH_DUP);
+	return ahash_cinit(NULL, NULL, 0644);
 }
 
 /* add an association */
