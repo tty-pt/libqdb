@@ -8,9 +8,10 @@ unsigned hd, rhd;
 void
 usage(char *prog)
 {
-	fprintf(stderr, "Usage: %s [-m ARG] [[-rl] [-pdg ARG] ...] db_path", prog);
+	fprintf(stderr, "Usage: %s [-m ARG] [[-rl] [-Lpdg ARG] ...] db_path", prog);
 	fprintf(stderr, "    Options:\n");
 	fprintf(stderr, "        -l           list values\n");
+	fprintf(stderr, "        -L KEY       list values of key (mode 0)\n");
 	fprintf(stderr, "        -p [KEY:]VAL put a value\n");
 	fprintf(stderr, "        -d [KEY:]VAL delete a value\n");
 	fprintf(stderr, "        -g KEY       get a value\n");
@@ -26,7 +27,7 @@ usage(char *prog)
 int
 main(int argc, char *argv[])
 {
-	static char *optstr = "lp:d:g:m:r";
+	static char *optstr = "lL:p:d:g:m:r";
 	char key_buf[BUFSIZ];
 	char *fname = argv[argc - 1], ch, *col;
 	unsigned tmp_id, mode = 0, reverse = 0, ign;
@@ -58,12 +59,23 @@ main(int argc, char *argv[])
 
 	while ((ch = getopt(argc, argv, optstr)) != -1) {
 		switch (ch) {
+		case 'L':
+			if (!mode) {
+				fprintf(stderr, "listing values of a key is not valid in mode 0\n");
+				break;
+			}
+			c = hash_iter(reverse ? rhd : hd, &tmp_id, sizeof(tmp_id));
+
+			while (hash_next(&ign, &tmp_id, &c))
+				printf("%u\n", tmp_id);
+			break;
+
 		case 'l':
 			if (mode) {
-				c = hash_iter(reverse ? rhd : hd, &tmp_id, sizeof(tmp_id));
+				c = hash_iter(reverse ? rhd : hd, NULL, 0);
 
 				while (hash_next(&ign, &tmp_id, &c))
-					printf("%u\n", tmp_id);
+					printf("%u:%u\n", ign, tmp_id);
 			} else {
 				c = lhash_iter(hd);
 
