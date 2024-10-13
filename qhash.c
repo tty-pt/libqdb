@@ -216,6 +216,9 @@ main(int argc, char *argv[])
 		}
 	}
 
-	hash_close(hd);
+	if (!mode)
+		lhash_close(hd);
+	else
+		hash_close(hd);
 	hash_close(rhd);
 }

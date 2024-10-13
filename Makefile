@@ -1,8 +1,6 @@
 PREFIX ?= /usr/local
 LIBDIR := $(DESTDIR)${PREFIX}/lib
 
-all: libqhash.so qhash
-
 libqhash.so: libqhash.c include/qhash.h
 	${CC} -o $@ libqhash.c -I/usr/local/include -g -O3 -fPIC -shared
 

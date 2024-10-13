@@ -329,6 +329,14 @@ hash_close(unsigned hd) {
 	idm_del(&idm, hd);
 }
 
+void lhash_close(unsigned hd) {
+	unsigned plast;
+	lhash_get(hd, &plast, (unsigned) -1);
+	if (plast != lh_idms[hd].last)
+		uhash_put(hd, (unsigned) -1, &lh_idms[hd].last, sizeof(unsigned));
+	hash_close(hd);
+}
+
 void
 hash_sync(unsigned hd) {
 	DB *db = hash_dbs[hd];
