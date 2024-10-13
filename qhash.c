@@ -1,6 +1,7 @@
 #include "include/qhash.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 #include <unistd.h>
 
 unsigned hd, rhd;
@@ -8,10 +9,11 @@ unsigned hd, rhd;
 void
 usage(char *prog)
 {
-	fprintf(stderr, "Usage: %s [-m ARG] [[-rl] [-Lpdg ARG] ...] db_path", prog);
+	fprintf(stderr, "Usage: %s [-m ARG] [[-rl] [-LRpdg ARG] ...] db_path", prog);
 	fprintf(stderr, "    Options:\n");
 	fprintf(stderr, "        -l           list values\n");
 	fprintf(stderr, "        -L KEY       list values of key (mode 0)\n");
+	fprintf(stderr, "        -R KEY       get random value of key (mode 0)\n");
 	fprintf(stderr, "        -p [KEY:]VAL put a value\n");
 	fprintf(stderr, "        -d [KEY:]VAL delete a value\n");
 	fprintf(stderr, "        -g KEY       get a value\n");
@@ -27,17 +29,19 @@ usage(char *prog)
 int
 main(int argc, char *argv[])
 {
-	static char *optstr = "lL:p:d:g:m:r";
+	static char *optstr = "lL:p:d:g:m:rR:";
 	char key_buf[BUFSIZ];
 	char *fname = argv[argc - 1], ch, *col;
 	unsigned tmp_id, mode = 0, reverse = 0, ign;
 	struct hash_cursor c;
+	int fmode = 0444;
 
 	if (argc < 2)
 		usage(*argv);
 
 	while ((ch = getopt(argc, argv, optstr)) != -1)
-		if (ch == 'm') {
+		switch (ch) {
+		case 'm':
 			mode = strtoul(optarg, NULL, 10);
 
 			if (mode >= 0 || mode <= 1)
@@ -45,28 +49,74 @@ main(int argc, char *argv[])
 
 			fprintf(stderr, "Invalid mode\n");
 			return EXIT_FAILURE;
+		case 'p':
+		case 'd':
+			fmode = 0644;
 		}
 
 	optind = 1;
 
 	if (mode) {
-		hd = ahash_cinit(fname, "hd", 0644);
-		rhd = ahash_cinit(fname, "rhd", 0644);
+		hd = ahash_cinit(fname, "hd", fmode);
+		rhd = ahash_cinit(fname, "rhd", fmode);
 	} else {
-		hd = lhash_cinit(0, fname, "hd", 0644);
-		rhd = hash_cinit(fname, "rhd", 0644, 0);
+		hd = lhash_cinit(0, fname, "hd", fmode);
+		rhd = hash_cinit(fname, "rhd", fmode, 0);
 	}
+
+	srandom(time(NULL));
 
 	while ((ch = getopt(argc, argv, optstr)) != -1) {
 		switch (ch) {
+		case 'R':
+			if (!mode) {
+				fprintf(stderr, "getting random value of a key is not valid in mode 0\n");
+				break;
+			}
+
+			{
+				struct idm_list list = idml_init();
+				unsigned count = 0, rand;
+
+				tmp_id = strtoul(optarg, NULL, 10);
+				c = hash_iter(reverse ? hd : rhd, &tmp_id, sizeof(tmp_id));
+
+				while (lhash_next(&ign, &tmp_id, &c)) {
+					idml_push(&list, tmp_id);
+					count ++;
+				}
+
+				
+				if (count == 0) {
+					printf("-1\n");
+					break;
+				}
+
+				rand = random() % count;
+
+
+				while ((tmp_id = idml_pop(&list)) != ((unsigned) -1)) {
+					count --;
+					if (count <= rand)
+						break;
+				}
+
+				while (idml_pop(&list) != ((unsigned) -1));
+
+				printf("%u\n", tmp_id);
+			}
+
+			break;
+
 		case 'L':
 			if (!mode) {
 				fprintf(stderr, "listing values of a key is not valid in mode 0\n");
 				break;
 			}
-			c = hash_iter(reverse ? rhd : hd, &tmp_id, sizeof(tmp_id));
+			tmp_id = strtoul(optarg, NULL, 10);
+			c = hash_iter(reverse ? hd : rhd, &tmp_id, sizeof(tmp_id));
 
-			while (hash_next(&ign, &tmp_id, &c))
+			while (lhash_next(&ign, &tmp_id, &c))
 				printf("%u\n", tmp_id);
 			break;
 
@@ -74,7 +124,7 @@ main(int argc, char *argv[])
 			if (mode) {
 				c = hash_iter(reverse ? rhd : hd, NULL, 0);
 
-				while (hash_next(&ign, &tmp_id, &c))
+				while (lhash_next(&ign, &tmp_id, &c))
 					printf("%u:%u\n", ign, tmp_id);
 			} else {
 				c = lhash_iter(hd);
@@ -106,6 +156,7 @@ main(int argc, char *argv[])
 
 			tmp_id = lhash_new(hd, optarg);
 			suhash_put(rhd, optarg, tmp_id);
+			uhash_put(hd, tmp_id, optarg, strlen(optarg) + 1);
 			printf("%u\n", tmp_id);
 			break;
 

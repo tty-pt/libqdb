@@ -95,7 +95,7 @@ int hash_pget(unsigned hd, void *pkey, void *key, size_t key_len);
 int hash_drop(unsigned hd);
 
 /* delete a value from an hash */
-void hash_del(unsigned hd, void *key, size_t key_len);
+int hash_del(unsigned hd, void *key, size_t key_len);
 
 /* delete a certain value from a hash that supports dupes */
 int hash_vdel(unsigned hd, void *key_data, size_t key_size, void *value_data, size_t value_size);
@@ -145,7 +145,7 @@ static inline void uhash_put(unsigned hd, unsigned ref, void *value, unsigned va
 }
 
 /* delete a value from an uhash */
-static inline void uhash_del(unsigned hd, unsigned key) {
+static inline int uhash_del(unsigned hd, unsigned key) {
 	return hash_del(hd, &key, sizeof(key));
 }
 
@@ -182,7 +182,7 @@ static inline int lhash_get(unsigned hd, void *target, unsigned ref) {
 void lhash_put(unsigned hd, unsigned ref, void *source);
 
 /* delete lhash item */
-void lhash_del(unsigned hd, unsigned ref);
+int lhash_del(unsigned hd, unsigned ref);
 
 /* start iterating through lhash */
 static inline struct hash_cursor lhash_iter(unsigned hd) {
@@ -254,8 +254,8 @@ static inline int shash_exists(unsigned hd, char *key) {
 }
 
 /* delete a value from an shash */
-static inline void shash_del(unsigned hd, char *key) {
-	hash_del(hd, key, strlen(key) + 1);
+static inline int shash_del(unsigned hd, char *key) {
+	return hash_del(hd, key, strlen(key) + 1);
 }
 
 /* start iterating on a hash table (maybe within a certain key) */
@@ -284,6 +284,14 @@ static inline void suhash_put(unsigned hd, char *key, unsigned value) {
 /* put a value into a shash */
 static inline void sphash_put(unsigned hd, char *key, void *value) {
 	shash_put(hd, key, value, sizeof(value));
+}
+
+/*
+ * UNSIGNED TO STRING HASH TABLE (USHASH)
+ */
+
+static inline void ushash_put(unsigned hd, unsigned key, char *value) {
+	uhash_put(hd, key, value, strlen(value) + 1);
 }
 
 /*

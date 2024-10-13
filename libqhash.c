@@ -191,7 +191,7 @@ hash_assoc(unsigned hd, unsigned link, assoc_t cb)
 		err(1, "hash_assoc");
 }
 
-void
+int
 hash_del(unsigned hd, void *key_r, size_t len)
 {
 	DB *db = hash_dbs[hd];
@@ -201,8 +201,7 @@ hash_del(unsigned hd, void *key_r, size_t len)
 	key.data = key_r;
 	key.size = len;
 
-	if (db->del(db, txnid, &key, 0))
-		err(1, "hash_del");
+	return db->del(db, txnid, &key, 0);
 }
 
 int
@@ -396,9 +395,9 @@ unsigned lhash_new(unsigned hd, void *item) {
 	return id;
 }
 
-void lhash_del(unsigned hd, unsigned ref) {
+int lhash_del(unsigned hd, unsigned ref) {
 	idm_del(&lh_idms[hd], ref);
-	uhash_del(hd, ref);
+	return uhash_del(hd, ref);
 }
 
 void lhash_put(unsigned hd, unsigned id, void *source) {
