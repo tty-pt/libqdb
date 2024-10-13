@@ -4,7 +4,7 @@
 #include <time.h>
 #include <unistd.h>
 
-unsigned hd, rhd;
+unsigned hd, rhd, qhd, ahd;
 
 void
 usage(char *prog)
@@ -13,6 +13,8 @@ usage(char *prog)
 	fprintf(stderr, "    Options:\n");
 	fprintf(stderr, "        -l           list values\n");
 	fprintf(stderr, "        -L KEY       list values of key (mode 0)\n");
+	fprintf(stderr, "        -q other_db  associative querying\n");
+	fprintf(stderr, "        -a other_db  associative printing\n");
 	fprintf(stderr, "        -R KEY       get random value of key (mode 0)\n");
 	fprintf(stderr, "        -p [KEY:]VAL put a value\n");
 	fprintf(stderr, "        -d [KEY:]VAL delete a value\n");
@@ -29,7 +31,7 @@ usage(char *prog)
 int
 main(int argc, char *argv[])
 {
-	static char *optstr = "lL:p:d:g:m:rR:";
+	static char *optstr = "lL:a:q:p:d:g:m:rR:";
 	char key_buf[BUFSIZ];
 	char *fname = argv[argc - 1], ch, *col;
 	unsigned tmp_id, mode = 0, reverse = 0, ign;
@@ -38,6 +40,8 @@ main(int argc, char *argv[])
 
 	if (argc < 2)
 		usage(*argv);
+
+	ahd = qhd = -1;
 
 	while ((ch = getopt(argc, argv, optstr)) != -1)
 		switch (ch) {
@@ -49,9 +53,22 @@ main(int argc, char *argv[])
 
 			fprintf(stderr, "Invalid mode\n");
 			return EXIT_FAILURE;
+		case 'a':
+			ahd = lhash_cinit(0, optarg, "hd", 0444);
+			break;
+		case 'q':
+			qhd = hash_cinit(optarg, "rhd", 0444, 0);
+			break;
 		case 'p':
 		case 'd':
 			fmode = 0644;
+		case 'l':
+		case 'L':
+		case 'R':
+		case 'g':
+		case 'r': break;
+		default: usage(*argv); return EXIT_FAILURE;
+		case '?': usage(*argv); return EXIT_SUCCESS;
 		}
 
 	optind = 1;
@@ -78,7 +95,11 @@ main(int argc, char *argv[])
 				struct idm_list list = idml_init();
 				unsigned count = 0, rand;
 
-				tmp_id = strtoul(optarg, NULL, 10);
+				if (qhd == -1)
+					tmp_id = strtoul(optarg, NULL, 10);
+				else
+					shash_get(qhd, &tmp_id, optarg);
+
 				c = hash_iter(reverse ? hd : rhd, &tmp_id, sizeof(tmp_id));
 
 				while (lhash_next(&ign, &tmp_id, &c)) {
@@ -103,7 +124,12 @@ main(int argc, char *argv[])
 
 				while (idml_pop(&list) != ((unsigned) -1));
 
-				printf("%u\n", tmp_id);
+				if (ahd == -1)
+					printf("%u\n", tmp_id);
+				else {
+					lhash_get(ahd, key_buf, tmp_id);
+					printf("%u %s\n", tmp_id, key_buf);
+				}
 			}
 
 			break;
@@ -113,11 +139,22 @@ main(int argc, char *argv[])
 				fprintf(stderr, "listing values of a key is not valid in mode 0\n");
 				break;
 			}
-			tmp_id = strtoul(optarg, NULL, 10);
+
+			if (qhd == -1)
+				tmp_id = strtoul(optarg, NULL, 10);
+			else
+				shash_get(rhd, &tmp_id, optarg);
+
 			c = hash_iter(reverse ? hd : rhd, &tmp_id, sizeof(tmp_id));
 
-			while (lhash_next(&ign, &tmp_id, &c))
-				printf("%u\n", tmp_id);
+			if (ahd == -1)
+				while (lhash_next(&ign, &tmp_id, &c))
+					printf("%u\n", tmp_id);
+			else
+				while (lhash_next(&ign, &tmp_id, &c)) {
+					lhash_get(ahd, key_buf, tmp_id);
+					printf("%u %s\n", tmp_id, key_buf);
+				}
 			break;
 
 		case 'l':
@@ -209,10 +246,6 @@ main(int argc, char *argv[])
 		case 'r':
 			reverse = !reverse;
 			break;
-
-		case 'm': break;
-		default: usage(*argv); return EXIT_FAILURE;
-		case '?': usage(*argv); return EXIT_SUCCESS;
 		}
 	}
 
@@ -221,4 +254,9 @@ main(int argc, char *argv[])
 	else
 		hash_close(hd);
 	hash_close(rhd);
+
+	if (ahd != (unsigned) -1)
+		lhash_close(ahd);
+	if (qhd != (unsigned) -1)
+		hash_close(qhd);
 }

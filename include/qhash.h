@@ -197,6 +197,8 @@ static inline int lhash_next(unsigned *key, void *value, struct hash_cursor *cur
 	return ret;
 }
 
+void lhash_close(unsigned hd);
+
 /*
  * ASSOCIATION HASH TABLE (AHASH) METHODS
  * lhash unsigned to unsigned tables can be used for associations
