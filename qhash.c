@@ -4,7 +4,7 @@
 #include <time.h>
 #include <unistd.h>
 
-unsigned hd, rhd, qhd, ahd;
+unsigned hd, rhd, qhd, ahd, ihd, irhd, iqhd, iahd;
 
 void
 usage(char *prog)
@@ -15,7 +15,7 @@ usage(char *prog)
 	fprintf(stderr, "        -L KEY       list values of key (mode 0)\n");
 	fprintf(stderr, "        -q other_db  associative querying\n");
 	fprintf(stderr, "        -a other_db  associative printing\n");
-	fprintf(stderr, "        -R KEY       get random value of key (mode 0)\n");
+	fprintf(stderr, "        -R KEY       get random value of key (key is ignored in mode 0)\n");
 	fprintf(stderr, "        -p [KEY:]VAL put a value\n");
 	fprintf(stderr, "        -d [KEY:]VAL delete a value\n");
 	fprintf(stderr, "        -g KEY       get a value\n");
@@ -32,7 +32,7 @@ int
 main(int argc, char *argv[])
 {
 	static char *optstr = "lL:a:q:p:d:g:m:rR:";
-	char key_buf[BUFSIZ];
+	char key_buf[BUFSIZ], value_buf[BUFSIZ];
 	char *fname = argv[argc - 1], ch, *col;
 	unsigned tmp_id, mode = 0, reverse = 0, ign;
 	struct hash_cursor c;
@@ -83,30 +83,29 @@ main(int argc, char *argv[])
 
 	srandom(time(NULL));
 
+	iahd = ahd;
+	iqhd = qhd;
+	ihd = hd;
+	irhd = rhd;
+
 	while ((ch = getopt(argc, argv, optstr)) != -1) {
 		switch (ch) {
 		case 'R':
-			if (!mode) {
-				fprintf(stderr, "getting random value of a key is not valid in mode 0\n");
-				break;
-			}
-
 			{
 				struct idm_list list = idml_init();
 				unsigned count = 0, rand;
 
-				if (qhd == -1)
+				if (iqhd == -1)
 					tmp_id = strtoul(optarg, NULL, 10);
 				else
-					shash_get(qhd, &tmp_id, optarg);
+					shash_get(iqhd, &tmp_id, optarg);
 
-				c = hash_iter(reverse ? hd : rhd, &tmp_id, sizeof(tmp_id));
+				c = hash_iter(irhd, mode ? &tmp_id : NULL, sizeof(tmp_id));
 
 				while (lhash_next(&ign, &tmp_id, &c)) {
 					idml_push(&list, tmp_id);
 					count ++;
 				}
-
 				
 				if (count == 0) {
 					printf("-1\n");
@@ -124,10 +123,10 @@ main(int argc, char *argv[])
 
 				while (idml_pop(&list) != ((unsigned) -1));
 
-				if (ahd == -1)
+				if (iahd == -1)
 					printf("%u\n", tmp_id);
 				else {
-					lhash_get(ahd, key_buf, tmp_id);
+					lhash_get(iahd, key_buf, tmp_id);
 					printf("%u %s\n", tmp_id, key_buf);
 				}
 			}
@@ -140,29 +139,47 @@ main(int argc, char *argv[])
 				break;
 			}
 
-			if (qhd == -1)
+			if (iqhd == -1)
 				tmp_id = strtoul(optarg, NULL, 10);
 			else
-				shash_get(rhd, &tmp_id, optarg);
+				shash_get(iqhd, &tmp_id, optarg);
 
-			c = hash_iter(reverse ? hd : rhd, &tmp_id, sizeof(tmp_id));
+			c = hash_iter(irhd, &tmp_id, sizeof(tmp_id));
 
-			if (ahd == -1)
+			if (iahd == -1)
 				while (lhash_next(&ign, &tmp_id, &c))
 					printf("%u\n", tmp_id);
 			else
 				while (lhash_next(&ign, &tmp_id, &c)) {
-					lhash_get(ahd, key_buf, tmp_id);
+					lhash_get(iahd, key_buf, tmp_id);
 					printf("%u %s\n", tmp_id, key_buf);
 				}
 			break;
 
 		case 'l':
 			if (mode) {
-				c = hash_iter(reverse ? rhd : hd, NULL, 0);
+				c = hash_iter(ihd, NULL, 0);
 
-				while (lhash_next(&ign, &tmp_id, &c))
-					printf("%u:%u\n", ign, tmp_id);
+				if (iqhd == -1) {
+					if (iahd == -1)
+						while (lhash_next(&ign, &tmp_id, &c))
+							printf("%u %u\n", ign, tmp_id);
+					else
+						while (lhash_next(&ign, &tmp_id, &c)) {
+							lhash_get(iahd, key_buf, tmp_id);
+							printf("%u %s\n", ign, key_buf);
+						}
+				} else if (iahd == -1)
+					while (lhash_next(&ign, &tmp_id, &c)) {
+						lhash_get(iqhd, key_buf, ign);
+						printf("%s %u\n", key_buf, tmp_id);
+					}
+				else
+					while (lhash_next(&ign, &tmp_id, &c)) {
+						lhash_get(iqhd, key_buf, ign);
+						lhash_get(iahd, value_buf, tmp_id);
+						printf("%s %s\n", key_buf, value_buf);
+					}
 			} else {
 				c = lhash_iter(hd);
 
@@ -174,15 +191,21 @@ main(int argc, char *argv[])
 
 		case 'p':
 			if (mode) {
-				ign = strtoul(optarg, NULL, 10);
 				col = strchr(optarg, ':');
 				if (!col) {
 					fprintf(stderr, "putting format in mode 1 is key:value\n");
 					break;
 				}
+				*col = '\0';
+
+				if (iqhd == -1)
+					ign = strtoul(optarg, NULL, 10);
+				else
+					shash_get(iqhd, &ign, optarg);
+
 				tmp_id = strtoul(col + 1, NULL, 10);
-				ahash_add(reverse ? rhd : hd, ign, tmp_id);
-				ahash_add(reverse ? hd : rhd, tmp_id, ign);
+				ahash_add(ihd, ign, tmp_id);
+				ahash_add(irhd, tmp_id, ign);
 				break;
 			}
 
@@ -199,17 +222,28 @@ main(int argc, char *argv[])
 
 		case 'd':
 			if (mode) {
-				ign = strtoul(optarg, NULL, 10);
 				col = strchr(optarg, ':');
 				if (!col) {
 					fprintf(stderr, "deleting format in mode 1 is key:value\n");
 					return EXIT_FAILURE;
 				}
-				tmp_id = strtoul(col + 1, NULL, 10);
-				ahash_remove(reverse ? rhd : hd, ign, tmp_id);
-				ahash_remove(reverse ? hd : rhd, tmp_id, ign);
+				*col = '\0';
+
+				if (iqhd == -1)
+					ign = strtoul(optarg, NULL, 10);
+				else
+					shash_get(iqhd, &ign, optarg);
+
+				if (iahd == -1)
+					tmp_id = strtoul(col + 1, NULL, 10);
+				else
+					shash_get(iahd, &tmp_id, col + 1);
+
+				ahash_remove(ihd, ign, tmp_id);
+				ahash_remove(irhd, tmp_id, ign);
 				break;
 			}
+
 			if (reverse) {
 				shash_get(rhd, &tmp_id, optarg);
 				lhash_del(hd, tmp_id);
@@ -226,9 +260,19 @@ main(int argc, char *argv[])
 
 		case 'g':
 			if (mode) {
-				ign = strtoul(optarg, NULL, 10);
-				uhash_get(reverse ? rhd : hd, &tmp_id, ign);
-				printf("%u\n", tmp_id);
+				if (iqhd == -1)
+					ign = strtoul(optarg, NULL, 10);
+				else
+					shash_get(iqhd, &ign, optarg);
+
+				uhash_get(ihd, &tmp_id, ign);
+
+				if (ahd == -1)
+					printf("%u\n", tmp_id);
+				else {
+					lhash_get(iahd, key_buf, tmp_id);
+					printf("%u %s\n", tmp_id, key_buf);
+				}
 				break;
 			}
 
@@ -245,6 +289,19 @@ main(int argc, char *argv[])
 
 		case 'r':
 			reverse = !reverse;
+
+			if (reverse) {
+				iahd = qhd;
+				iqhd = ahd;
+				ihd = rhd;
+				irhd = hd;
+			} else {
+				iahd = ahd;
+				iqhd = qhd;
+				ihd = hd;
+				irhd = rhd;
+			}
+
 			break;
 		}
 	}
