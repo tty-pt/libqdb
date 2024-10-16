@@ -67,6 +67,11 @@ And finally say that Mathew owns both:
 qhash -m1 -p 4:2 -p 4:3 assoc.db
 ```
 
+Or list all of Mathew's pets (names included):
+```sh
+qhash -m1 -a pets.db -g4 assoc.db
+```
+
 And now get a random pet name that corresponds to Mathew:
 ```sh
 qhash -m1 -q owners.db -a pets.db -RMathew assoc.db # example output: dog

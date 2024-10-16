@@ -16,13 +16,11 @@ usage(char *prog)
 	fprintf(stderr, "    Options:\n");
 	fprintf(stderr, "        -r           reverse operation\n");
 	fprintf(stderr, "        -l           list all values\n");
-	fprintf(stderr, "        -q other_db  associative querying\n");
-	fprintf(stderr, "        -a other_db  associative printing\n");
+	fprintf(stderr, "        -q other_db  db to use string lookups and printing\n");
+	fprintf(stderr, "        -a other_db  db to use for reversed string lookups and printing\n");
 	fprintf(stderr, "        -R KEY       get random value of key (key is ignored in mode 0)\n");
-	fprintf(stderr, "        -p KEY[:VAL] put a key/value pair\n");
-	fprintf(stderr, "                     (no reverse: mode 1)\n");
-	fprintf(stderr, "        -d KEY[:VAL] delete key/value pair(s)\n");
-	fprintf(stderr, "                     (no reverse: mode 1 with ':')\n");
+	fprintf(stderr, "        -p KEY[:VAL] put a key/value pair (not reversed in mode 1)\n");
+	fprintf(stderr, "        -d KEY[:VAL] delete key/value pair(s) (not reversed in mode 1 with only KEY)\n");
 	fprintf(stderr, "        -g KEY       get value(s) of a key\n");
 	fprintf(stderr, "        -m 0-1       select mode of operation\n");
 	fprintf(stderr, "    Modes (default is 0):\n");
@@ -133,25 +131,32 @@ static inline void mode1_get() {
 	if (iahd != -1) {
 		while (lhash_next(&ign, &tmp_id, &c)) {
 			lhash_get(iahd, key_buf, tmp_id);
-			printf("%u %s\n", tmp_id, key_buf);
+			printf("%u %u %s\n", ign, tmp_id, key_buf);
 		}
 		return;
 	}
 
 	while (lhash_next(&ign, &tmp_id, &c))
-		printf("%u\n", tmp_id);
+		printf("%u %u\n", ign, tmp_id);
 }
 
 static inline void mode0_get() {
 	if (reverse) {
-		shash_get(rhd, &tmp_id, optarg);
+		if (shash_get(rhd, &tmp_id, optarg)) {
+			printf("%u -1\n", tmp_id);
+			return;
+		}
 		printf("%u\n", tmp_id);
 		return;
 	}
 
 	ign = strtoul(optarg, NULL, 10);
-	uhash_get(hd, &key_buf, ign);
-	printf("%s\n", key_buf);
+	if (uhash_get(hd, &key_buf, ign)) {
+		printf("%u -1\n", ign);
+		return;
+	}
+
+	printf("%u %s\n", ign, key_buf);
 }
 
 // not affected by reverse
@@ -220,7 +225,7 @@ main(int argc, char *argv[])
 {
 	static char *optstr = "la:q:p:d:g:m:rR:?";
 	char *fname = argv[argc - 1], ch, *col;
-	int fmode = 0444;
+	int fmode = 0644;
 
 	if (argc < 2) {
 		usage(*argv);
