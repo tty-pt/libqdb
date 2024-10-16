@@ -30,6 +30,16 @@ usage(char *prog)
 	fprintf(stderr, "         1           associative mode (n id : n id)\n");
 }
 
+static inline unsigned ahd_get(unsigned hd, char *arg) {
+	unsigned ret;
+
+	if (hd == -1)
+		return strtoul(arg, NULL, 10);
+
+	shash_get(hd, &ret, arg);
+	return ret;
+}
+
 // not affected by reverse
 static inline int mode1_delete_one() {
 	col = strchr(optarg, ':');
@@ -38,18 +48,13 @@ static inline int mode1_delete_one() {
 
 	*col = '\0';
 
-	if (qhd == -1)
-		ign = strtoul(optarg, NULL, 10);
-	else
-		shash_get(qhd, &ign, optarg);
+	tmp_id = ahd_get(qhd, optarg);
 
-	if (ahd == -1)
-		tmp_id = strtoul(col + 1, NULL, 10);
-	else
-		shash_get(ahd, &tmp_id, col + 1);
+	col++;
+	ign = ahd_get(ahd, col);
 
-	ahash_remove(hd, ign, tmp_id);
-	ahash_remove(rhd, tmp_id, ign);
+	ahash_remove(hd, tmp_id, ign);
+	ahash_remove(rhd, ign, tmp_id);
 	return 1;
 }
 
@@ -57,33 +62,18 @@ static inline void mode1_delete() {
 	if (mode1_delete_one())
 		return;
 
-	if (iqhd == -1)
-		tmp_id = strtoul(optarg, NULL, 10);
-	else
-		shash_get(iqhd, &tmp_id, optarg);
+	tmp_id = ahd_get(iqhd, optarg);
 
 	c = hash_iter(ihd, &tmp_id, sizeof(tmp_id));
 
-	if (iahd == -1) {
-		while (lhash_next(&ign, &tmp_id, &c)) {
-			hash_cdel(&c);
-			printf("%u\n", tmp_id);
-		}
-		return;
-	}
-
-	while (lhash_next(&ign, &tmp_id, &c)) {
+	while (lhash_next(&ign, &tmp_id, &c))
 		hash_cdel(&c);
-		lhash_get(iahd, key_buf, tmp_id);
-		printf("%u %s\n", tmp_id, key_buf);
-	}
 }
 
 static inline void mode0_delete() {
 	if (reverse) {
 		shash_get(rhd, &tmp_id, optarg);
 		lhash_del(hd, tmp_id);
-		printf("%u\n", tmp_id);
 		return;
 	}
 
@@ -91,17 +81,13 @@ static inline void mode0_delete() {
 	lhash_get(hd, key_buf, tmp_id);
 	shash_del(rhd, key_buf);
 	lhash_del(hd, tmp_id);
-	printf("%s\n", key_buf);
 }
 
 static inline void any_rand() {
 	struct idm_list list = idml_init();
 	unsigned count = 0, rand;
 
-	if (iqhd == -1)
-		tmp_id = strtoul(optarg, NULL, 10);
-	else
-		shash_get(iqhd, &tmp_id, optarg);
+	tmp_id = ahd_get(iqhd, optarg);
 
 	if (mode)
 		c = hash_iter(ihd, &tmp_id, sizeof(tmp_id));
@@ -127,21 +113,11 @@ static inline void any_rand() {
 	}
 
 	idml_drop(&list);
-
-	if (iahd == -1) {
-		printf("%u\n", tmp_id);
-		return;
-	}
-
-	lhash_get(iahd, key_buf, tmp_id);
-	printf("%u %s\n", tmp_id, key_buf);
+	printf("%u\n", tmp_id);
 }
 
 static inline void mode1_get() {
-	if (iqhd == -1)
-		tmp_id = strtoul(optarg, NULL, 10);
-	else
-		shash_get(iqhd, &tmp_id, optarg);
+	tmp_id = ahd_get(iqhd, optarg);
 
 	c = hash_iter(ihd, &tmp_id, sizeof(tmp_id));
 
@@ -166,7 +142,7 @@ static inline void mode0_get() {
 
 	ign = strtoul(optarg, NULL, 10);
 	uhash_get(hd, &key_buf, ign);
-	printf("%s\n", key_buf);
+	printf("%u %s\n", ign, key_buf);
 }
 
 // not affected by reverse
@@ -176,22 +152,16 @@ static inline void mode1_put() {
 		fprintf(stderr, "putting format in mode 1 is key:value\n");
 		return;
 	}
+
 	*col = '\0';
 
-	if (qhd == -1)
-		ign = strtoul(optarg, NULL, 10);
-	else
-		shash_get(qhd, &ign, optarg);
+	tmp_id = ahd_get(qhd, optarg);
 
 	col ++;
-	if (ahd == -1)
-		tmp_id = strtoul(col, NULL, 10);
-	else
-		shash_get(ahd, &tmp_id, col);
-	fprintf(stderr, "COL? '%c' %s' %u\n", *col, col, tmp_id);
+	ign = ahd_get(ahd, col);
 
-	ahash_add(hd, ign, tmp_id);
-	ahash_add(rhd, tmp_id, ign);
+	ahash_add(hd, tmp_id, ign);
+	ahash_add(rhd, ign, tmp_id);
 }
 
 static inline void mode0_put() {
@@ -203,35 +173,28 @@ static inline void mode0_put() {
 	tmp_id = lhash_new(hd, optarg);
 	suhash_put(rhd, optarg, tmp_id);
 	uhash_put(hd, tmp_id, optarg, strlen(optarg) + 1);
-	printf("%u\n", tmp_id);
 }
 
 static inline void mode1_list() {
 	c = hash_iter(ihd, NULL, 0);
 
-	if (iqhd == -1) {
-		if (iahd == -1) {
-			while (lhash_next(&ign, &tmp_id, &c))
-				printf("%u %u\n", ign, tmp_id);
-			return;
-		}
-
-		while (lhash_next(&ign, &tmp_id, &c)) {
-			lhash_get(iahd, key_buf, tmp_id);
-			printf("%u %s\n", ign, key_buf);
-		}
-	} else if (iahd == -1) {
+	if (iqhd != -1) {
 		while (lhash_next(&ign, &tmp_id, &c)) {
 			lhash_get(iqhd, key_buf, ign);
-			printf("%s %u\n", key_buf, tmp_id);
+			printf("%u %s\n", tmp_id, key_buf);
 		}
 		return;
 	}
 
+	if (iahd == -1) {
+		while (lhash_next(&ign, &tmp_id, &c))
+			printf("%u %u\n", ign, tmp_id);
+		return;
+	}
+
 	while (lhash_next(&ign, &tmp_id, &c)) {
-		lhash_get(iqhd, key_buf, ign);
-		lhash_get(iahd, value_buf, tmp_id);
-		printf("%s %s\n", key_buf, value_buf);
+		lhash_get(iahd, key_buf, tmp_id);
+		printf("%u %s\n", ign, key_buf);
 	}
 }
 
