@@ -80,7 +80,7 @@ unsigned hash_cinit(const char *file, const char *database, int mode, int flags)
 void hash_assoc(unsigned hd, unsigned link, assoc_t assoc);
 
 /* put a value into an hash */
-void hash_put(unsigned hd, void *key, size_t key_len, void *value, size_t value_len);
+int hash_put(unsigned hd, void *key, size_t key_len, void *value, size_t value_len);
 
 /* get a value from a hash */
 int hash_get(unsigned hd, void *value, void *key, size_t key_len);
@@ -108,6 +108,9 @@ void hash_close(unsigned hd);
 
 /* get next value from hash iteration */
 int hash_next(void *key, void *value, struct hash_cursor *cur);
+
+/* delete value under cursor */
+int hash_cdel(struct hash_cursor *cur);
 
 /* finalize iteration if exiting it earlier */
 void hash_fin(struct hash_cursor *cur);
@@ -140,8 +143,8 @@ static inline int uhash_pget(unsigned hd, void *pkey, unsigned ref) {
 }
 
 /* set a uhash key's value */
-static inline void uhash_put(unsigned hd, unsigned ref, void *value, unsigned value_len) {
-	hash_put(hd, &ref, sizeof(ref), value, value_len);
+static inline int uhash_put(unsigned hd, unsigned ref, void *value, unsigned value_len) {
+	return hash_put(hd, &ref, sizeof(ref), value, value_len);
 }
 
 /* delete a value from an uhash */
@@ -179,7 +182,7 @@ static inline int lhash_get(unsigned hd, void *target, unsigned ref) {
 }
 
 /* set an lhash item */
-void lhash_put(unsigned hd, unsigned ref, void *source);
+int lhash_put(unsigned hd, unsigned ref, void *source);
 
 /* delete lhash item */
 int lhash_del(unsigned hd, unsigned ref);
@@ -218,8 +221,8 @@ static inline unsigned ahash_init() {
 }
 
 /* add an association */
-static inline void ahash_add(unsigned ahd, unsigned container, unsigned item) {
-	uhash_put(ahd, container, &item, sizeof(item));
+static inline int ahash_add(unsigned ahd, unsigned container, unsigned item) {
+	return uhash_put(ahd, container, &item, sizeof(item));
 }
 
 /* remove an association */
@@ -241,8 +244,8 @@ static inline int ahash_next(void *value, struct hash_cursor *cur) {
  */
 
 /* put a value into a shash */
-static inline void shash_put(unsigned hd, char *key, void *value, size_t value_len) {
-	hash_put(hd, key, strlen(key) + 1, value, value_len);
+static inline int shash_put(unsigned hd, char *key, void *value, size_t value_len) {
+	return hash_put(hd, key, strlen(key) + 1, value, value_len);
 }
 
 /* get a value from an shash */
@@ -273,8 +276,8 @@ static inline struct hash_cursor shash_iter(unsigned hd, char *key) {
  */
 
 /* put a value into a shash */
-static inline void suhash_put(unsigned hd, char *key, unsigned value) {
-	shash_put(hd, key, &value, sizeof(value));
+static inline int suhash_put(unsigned hd, char *key, unsigned value) {
+	return shash_put(hd, key, &value, sizeof(value));
 }
 
 /*
@@ -284,24 +287,24 @@ static inline void suhash_put(unsigned hd, char *key, unsigned value) {
  */
 
 /* put a value into a shash */
-static inline void sphash_put(unsigned hd, char *key, void *value) {
-	shash_put(hd, key, value, sizeof(value));
+static inline int sphash_put(unsigned hd, char *key, void *value) {
+	return shash_put(hd, key, value, sizeof(value));
 }
 
 /*
  * UNSIGNED TO STRING HASH TABLE (USHASH)
  */
 
-static inline void ushash_put(unsigned hd, unsigned key, char *value) {
-	uhash_put(hd, key, value, strlen(value) + 1);
+static inline int ushash_put(unsigned hd, unsigned key, char *value) {
+	return uhash_put(hd, key, value, strlen(value) + 1);
 }
 
 /*
  * STRING TO STRING HASH TABLE (SSHASH)
  */
 
-static inline void sshash_put(unsigned hd, char *key, char *value) {
-	hash_put(hd, key, strlen(key) + 1, value, strlen(value) + 1);
+static inline int sshash_put(unsigned hd, char *key, char *value) {
+	return hash_put(hd, key, strlen(key) + 1, value, strlen(value) + 1);
 }
 
 /* AUTO TABLES */

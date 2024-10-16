@@ -28,7 +28,7 @@ static unsigned hash_n = 0;
 static int hash_first = 1;
 void *txnid = NULL;
 
-static inline void
+static inline int
 _hash_put(DB *db, void *key_r, size_t key_len, void *value, size_t value_len)
 {
 	DBT key, data;
@@ -49,7 +49,8 @@ _hash_put(DB *db, void *key_r, size_t key_len, void *value, size_t value_len)
 
 	ret = db->put(db, txnid, &key, &data, 0);
 	if (ret && (ret != DB_KEYEXIST || !dupes))
-		err(1, "hash_put");
+		warn("hash_put");
+	return ret;
 }
 
 unsigned
@@ -89,11 +90,11 @@ hash_cinit(const char *file, const char *database, int mode, int flags)
 	return id;
 }
 
-void
+int
 hash_put(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len)
 {
 	DB *db = hash_dbs[hd];
-	_hash_put(db, key_r, key_len, value, value_len);
+	return _hash_put(db, key_r, key_len, value, value_len);
 }
 
 static inline void * __hash_get(DB *db, size_t *size, void *key_r, size_t key_len)
@@ -299,6 +300,12 @@ hash_next(void *key, void *value, struct hash_cursor *cur)
 	}
 }
 
+int
+hash_cdel(struct hash_cursor *cur) {
+	struct hash_internal *internal = cur->internal;
+	return internal->cursor->c_del(internal->cursor, 0);
+}
+
 int hash_drop(unsigned hd) {
 	DB *db = hash_dbs[hd];
 	DBT key, data;
@@ -408,6 +415,6 @@ int lhash_del(unsigned hd, unsigned ref) {
 	return uhash_del(hd, ref);
 }
 
-void lhash_put(unsigned hd, unsigned id, void *source) {
-	uhash_put(hd, id, source, lh_len(hd, source));
+int lhash_put(unsigned hd, unsigned id, void *source) {
+	return uhash_put(hd, id, source, lh_len(hd, source));
 }
