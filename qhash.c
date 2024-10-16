@@ -4,7 +4,7 @@
 #include <time.h>
 #include <unistd.h>
 
-unsigned hd, rhd, qhd, ahd, ihd, irhd, iqhd, iahd;
+unsigned hd, rhd, qhd, qrhd, ahd, arhd, ihd, iqrhd, iahd;
 unsigned tmp_id, mode = 0, reverse = 0, ign;
 char key_buf[BUFSIZ], value_buf[BUFSIZ], *col;
 struct hash_cursor c;
@@ -48,10 +48,10 @@ static inline int mode1_delete_one() {
 
 	*col = '\0';
 
-	tmp_id = ahd_get(qhd, optarg);
+	tmp_id = ahd_get(qrhd, optarg);
 
 	col++;
-	ign = ahd_get(ahd, col);
+	ign = ahd_get(arhd, col);
 
 	ahash_remove(hd, tmp_id, ign);
 	ahash_remove(rhd, ign, tmp_id);
@@ -62,7 +62,7 @@ static inline void mode1_delete() {
 	if (mode1_delete_one())
 		return;
 
-	tmp_id = ahd_get(iqhd, optarg);
+	tmp_id = ahd_get(iqrhd, optarg);
 
 	c = hash_iter(ihd, &tmp_id, sizeof(tmp_id));
 
@@ -87,7 +87,7 @@ static inline void any_rand() {
 	struct idm_list list = idml_init();
 	unsigned count = 0, rand;
 
-	tmp_id = ahd_get(iqhd, optarg);
+	tmp_id = ahd_get(iqrhd, optarg);
 
 	if (mode)
 		c = hash_iter(ihd, &tmp_id, sizeof(tmp_id));
@@ -100,37 +100,46 @@ static inline void any_rand() {
 	}
 
 	if (count == 0) {
-		printf("-1\n");
+		printf("%u -1\n", tmp_id);
 		return;
 	}
 
 	rand = random() % count;
 
-	while ((tmp_id = idml_pop(&list)) != ((unsigned) -1)) {
+	while ((ign = idml_pop(&list)) != ((unsigned) -1)) {
 		count --;
 		if (count <= rand)
 			break;
 	}
 
-	idml_drop(&list);
-	printf("%u\n", tmp_id);
-}
+	if (!mode)
+		tmp_id = 0;
 
-static inline void mode1_get() {
-	tmp_id = ahd_get(iqhd, optarg);
-
-	c = hash_iter(ihd, &tmp_id, sizeof(tmp_id));
-
-	if (iahd == -1) {
-		while (lhash_next(&ign, &tmp_id, &c))
-			printf("%u\n", tmp_id);
+	if (iahd != -1) {
+		lhash_get(iahd, key_buf, tmp_id);
+		printf("%u %u %s\n", tmp_id, ign, key_buf);
 		return;
 	}
 
-	while (lhash_next(&ign, &tmp_id, &c)) {
-		lhash_get(iahd, key_buf, tmp_id);
-		printf("%u %s\n", tmp_id, key_buf);
+	idml_drop(&list);
+	printf("%u %u\n", tmp_id, ign);
+}
+
+static inline void mode1_get() {
+	tmp_id = ahd_get(iqrhd, optarg);
+
+	c = hash_iter(ihd, &tmp_id, sizeof(tmp_id));
+
+	if (iahd != -1) {
+		while (lhash_next(&ign, &tmp_id, &c)) {
+			lhash_get(iahd, key_buf, tmp_id);
+			printf("%u %s\n", tmp_id, key_buf);
+		}
+		return;
 	}
+
+	while (lhash_next(&ign, &tmp_id, &c))
+		printf("%u\n", tmp_id);
 }
 
 static inline void mode0_get() {
@@ -142,7 +151,7 @@ static inline void mode0_get() {
 
 	ign = strtoul(optarg, NULL, 10);
 	uhash_get(hd, &key_buf, ign);
-	printf("%u %s\n", ign, key_buf);
+	printf("%s\n", key_buf);
 }
 
 // not affected by reverse
@@ -155,10 +164,10 @@ static inline void mode1_put() {
 
 	*col = '\0';
 
-	tmp_id = ahd_get(qhd, optarg);
+	tmp_id = ahd_get(qrhd, optarg);
 
 	col ++;
-	ign = ahd_get(ahd, col);
+	ign = ahd_get(arhd, col);
 
 	ahash_add(hd, tmp_id, ign);
 	ahash_add(rhd, ign, tmp_id);
@@ -173,32 +182,33 @@ static inline void mode0_put() {
 	tmp_id = lhash_new(hd, optarg);
 	suhash_put(rhd, optarg, tmp_id);
 	uhash_put(hd, tmp_id, optarg, strlen(optarg) + 1);
+	printf("%u\n", tmp_id);
 }
 
-static inline void mode1_list() {
-	c = hash_iter(ihd, NULL, 0);
+static inline void mode1_list() { // no reverse
+	c = hash_iter(hd, NULL, 0);
 
-	if (iqhd != -1) {
+	if (qhd != -1) {
 		while (lhash_next(&ign, &tmp_id, &c)) {
-			lhash_get(iqhd, key_buf, ign);
-			printf("%u %s\n", tmp_id, key_buf);
+			lhash_get(qhd, key_buf, ign);
+			printf("%u %u %s\n", ign, tmp_id, key_buf);
 		}
 		return;
 	}
 
-	if (iahd == -1) {
+	if (ahd == -1) {
 		while (lhash_next(&ign, &tmp_id, &c))
 			printf("%u %u\n", ign, tmp_id);
 		return;
 	}
 
 	while (lhash_next(&ign, &tmp_id, &c)) {
-		lhash_get(iahd, key_buf, tmp_id);
-		printf("%u %s\n", ign, key_buf);
+		lhash_get(ahd, key_buf, tmp_id);
+		printf("%u %u %s\n", ign, tmp_id, key_buf);
 	}
 }
 
-static inline void mode0_list() {
+static inline void mode0_list() { // no reverse
 	c = lhash_iter(hd);
 
 	while (lhash_next(&tmp_id, key_buf, &c))
@@ -217,7 +227,7 @@ main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
-	ahd = qhd = -1;
+	ahd = qhd = qrhd = arhd = -1;
 
 	while ((ch = getopt(argc, argv, optstr)) != -1)
 		switch (ch) {
@@ -230,10 +240,12 @@ main(int argc, char *argv[])
 			fprintf(stderr, "Invalid mode\n");
 			return EXIT_FAILURE;
 		case 'a':
-			ahd = hash_cinit(optarg, "rhd", 0444, 0);
+			ahd = lhash_cinit(0, optarg, "hd", 0444);
+			arhd = hash_cinit(optarg, "rhd", 0444, 0);
 			break;
 		case 'q':
-			qhd = hash_cinit(optarg, "rhd", 0444, 0);
+			qhd = lhash_cinit(0, optarg, "hd", 0444);
+			qrhd = hash_cinit(optarg, "rhd", 0444, 0);
 			break;
 		case 'p':
 		case 'd': fmode = 0644;
@@ -257,10 +269,7 @@ main(int argc, char *argv[])
 
 	srandom(time(NULL));
 
-	iahd = ahd;
-	iqhd = qhd;
-	ihd = hd;
-	irhd = rhd;
+	iahd = ahd; iqrhd = qrhd; ihd = hd;
 
 	while ((ch = getopt(argc, argv, optstr)) != -1) {
 		switch (ch) {
@@ -273,11 +282,9 @@ main(int argc, char *argv[])
 			reverse = !reverse;
 
 			if (reverse) {
-				iahd = qhd; iqhd = ahd;
-				ihd = rhd; irhd = hd;
+				iqrhd = arhd; iahd = qhd; ihd = rhd;
 			} else {
-				iahd = ahd; iqhd = qhd;
-				ihd = hd; irhd = rhd;
+				iqrhd = qrhd; iahd = ahd; ihd = hd;
 			}
 
 			break;
