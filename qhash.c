@@ -4,7 +4,7 @@
 #include <time.h>
 #include <unistd.h>
 
-unsigned hd, rhd, qhd, qrhd, ahd, arhd, ihd, iqrhd, iahd, iqhd;
+unsigned hd, rhd, qhd, qrhd, ahd, arhd, ihd, iqrhd, iahd, iqhd, iarhd;
 unsigned tmp_id, mode = 0, reverse = 0, ign;
 char key_buf[BUFSIZ], value_buf[BUFSIZ], *col;
 struct hash_cursor c;
@@ -93,10 +93,11 @@ static inline void any_rand() {
 	else
 		c = hash_iter(ihd, NULL, 0);
 
-	while (lhash_next(&tmp_id, &ign, &c)) {
-		idml_push(&list, ign);
-		count ++;
-	}
+	while (lhash_next(&tmp_id, &ign, &c))
+		if (lhash_get(iarhd, &rand, tmp_id)) {
+			idml_push(&list, ign);
+			count ++;
+		}
 
 	if (count == 0) {
 		printf("%u -1\n", tmp_id);
@@ -114,8 +115,8 @@ static inline void any_rand() {
 	if (!mode)
 		tmp_id = 0;
 
-	if (iahd != -1) {
-		lhash_get(iahd, key_buf, tmp_id);
+	if (iarhd != -1) {
+		lhash_get(iahd, key_buf, ign);
 		printf("%u %u %s\n", tmp_id, ign, key_buf);
 		return;
 	}
@@ -260,7 +261,7 @@ main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
-	ahd = qhd = qrhd = arhd = -1;
+	ahd = qhd = qrhd = arhd = iqrhd = iarhd = -1;
 
 	while ((ch = getopt(argc, argv, optstr)) != -1)
 		switch (ch) {
@@ -303,7 +304,7 @@ main(int argc, char *argv[])
 
 	srandom(time(NULL));
 
-	iahd = ahd; iqrhd = qrhd; ihd = hd; iqhd = qhd;
+	iahd = ahd; iqrhd = qrhd; ihd = hd; iqhd = qhd; iarhd = arhd;
 
 	while ((ch = getopt(argc, argv, optstr)) != -1) {
 		switch (ch) {
@@ -317,9 +318,9 @@ main(int argc, char *argv[])
 			reverse = !reverse;
 
 			if (reverse) {
-				iqrhd = arhd; iahd = qhd; ihd = rhd; iqhd = ahd;
+				iqrhd = arhd; iahd = qhd; ihd = rhd; iqhd = ahd; iarhd = qrhd;
 			} else {
-				iqrhd = qrhd; iahd = ahd; ihd = hd; iqhd = qhd;
+				iqrhd = qrhd; iahd = ahd; ihd = hd; iqhd = qhd; iarhd = arhd;
 			}
 
 			break;
