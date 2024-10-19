@@ -194,9 +194,17 @@ static inline void mode0_put() {
 		exit(EXIT_FAILURE);
 	}
 
-	tmp_id = lhash_new(hd, optarg);
-	suhash_put(rhd, optarg, tmp_id);
-	uhash_put(hd, tmp_id, optarg, strlen(optarg) + 1);
+	col = strchr(optarg, ':');
+	if (col) {
+		tmp_id = strtoul(optarg, NULL, 10);
+		col++;
+	} else {
+		tmp_id = lhash_new(hd, optarg);
+		col = optarg;
+	}
+
+	suhash_put(rhd, col, tmp_id);
+	uhash_put(hd, tmp_id, col, strlen(col) + 1);
 	printf("%u\n", tmp_id);
 }
 
@@ -245,8 +253,16 @@ static inline void mode1_list() {
 static inline void mode0_list() { // no reverse
 	c = lhash_iter(hd);
 
-	while (lhash_next(&tmp_id, key_buf, &c))
-		printf("%u %s\n", tmp_id, key_buf);
+	if (qhd == -1) {
+		while (lhash_next(&tmp_id, key_buf, &c))
+			printf("%u %s\n", tmp_id, key_buf);
+		return;
+	}
+
+	while (lhash_next(&tmp_id, key_buf, &c)) {
+		lhash_get(qhd, value_buf, tmp_id);
+		printf("%u %s %s\n", tmp_id, value_buf, key_buf);
+	}
 }
 
 int
