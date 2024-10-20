@@ -94,7 +94,7 @@ static inline void any_rand() {
 		c = hash_iter(ihd, NULL, 0);
 
 	while (lhash_next(&tmp_id, &ign, &c))
-		if (lhash_get(iarhd, &rand, tmp_id)) {
+		if (iarhd == -1 || lhash_get(iarhd, &rand, tmp_id)) {
 			idml_push(&list, ign);
 			count ++;
 		}
@@ -115,13 +115,14 @@ static inline void any_rand() {
 	if (!mode)
 		tmp_id = 0;
 
+	idml_drop(&list);
+
 	if (iarhd != -1) {
-		lhash_get(iahd, key_buf, ign);
+		lhash_get(iarhd, key_buf, ign);
 		printf("%u %u %s\n", tmp_id, ign, key_buf);
 		return;
 	}
 
-	idml_drop(&list);
 	printf("%u %u\n", tmp_id, ign);
 }
 
@@ -270,7 +271,7 @@ main(int argc, char *argv[])
 {
 	static char *optstr = "la:q:p:d:g:m:rR:L:?";
 	char *fname = argv[argc - 1], ch, *col;
-	int fmode = 0644;
+	int fmode = 0664;
 
 	if (argc < 2) {
 		usage(*argv);
@@ -290,15 +291,15 @@ main(int argc, char *argv[])
 			fprintf(stderr, "Invalid mode\n");
 			return EXIT_FAILURE;
 		case 'a':
-			ahd = lhash_cinit(0, optarg, "hd", 0444);
-			arhd = hash_cinit(optarg, "rhd", 0444, 0);
+			ahd = lhash_cinit(0, optarg, "hd", fmode);
+			arhd = hash_cinit(optarg, "rhd", fmode, 0);
 			break;
 		case 'q':
-			qhd = lhash_cinit(0, optarg, "hd", 0444);
-			qrhd = hash_cinit(optarg, "rhd", 0444, 0);
+			qhd = lhash_cinit(0, optarg, "hd", fmode);
+			qrhd = hash_cinit(optarg, "rhd", fmode, 0);
 			break;
 		case 'p':
-		case 'd': fmode = 0644;
+		case 'd':
 		case 'l':
 		case 'L':
 		case 'R':
