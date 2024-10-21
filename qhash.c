@@ -4,7 +4,7 @@
 #include <time.h>
 #include <unistd.h>
 
-unsigned hd, rhd, qhd, qrhd, ahd, arhd, ihd, iqrhd, iahd, iqhd, iarhd;
+unsigned hd, rhd, qhd, qrhd, ahd, arhd, ihd, irhd, iqrhd, iahd, iqhd;
 unsigned tmp_id, mode = 0, reverse = 0, ign;
 char key_buf[BUFSIZ], value_buf[BUFSIZ], *col;
 struct hash_cursor c;
@@ -16,7 +16,7 @@ usage(char *prog)
 	fprintf(stderr, "    Options:\n");
 	fprintf(stderr, "        -r           reverse operation\n");
 	fprintf(stderr, "        -l           list all values (not reversed in mode 1)\n");
-	fprintf(stderr, "        -L           list missing values (mode 1)\n");
+	fprintf(stderr, "        -L           list missing values\n");
 	fprintf(stderr, "        -q other_db  db to use string lookups and printing\n");
 	fprintf(stderr, "        -a other_db  db to use for reversed string lookups and printing\n");
 	fprintf(stderr, "        -R KEY       get random value of key (key is ignored in mode 0)\n");
@@ -47,13 +47,13 @@ static inline int mode1_delete_one() {
 
 	*col = '\0';
 
-	tmp_id = ahd_get(qrhd, optarg);
+	tmp_id = ahd_get(qhd, optarg);
 
 	col++;
 	ign = ahd_get(arhd, col);
 
-	ahash_remove(hd, tmp_id, ign);
-	ahash_remove(rhd, ign, tmp_id);
+	ahash_remove(rhd, tmp_id, ign);
+	ahash_remove(hd, ign, tmp_id);
 	return 1;
 }
 
@@ -63,7 +63,7 @@ static inline void mode1_delete() {
 
 	tmp_id = ahd_get(iqrhd, optarg);
 
-	c = hash_iter(ihd, &tmp_id, sizeof(tmp_id));
+	c = hash_iter(irhd, &tmp_id, sizeof(tmp_id));
 
 	while (lhash_next(&ign, &tmp_id, &c))
 		hash_cdel(&c);
@@ -94,7 +94,7 @@ static inline void any_rand() {
 		c = hash_iter(ihd, NULL, 0);
 
 	while (lhash_next(&tmp_id, &ign, &c))
-		if (iarhd == -1 || lhash_get(iarhd, &rand, tmp_id)) {
+		if (iahd == -1 || !uhash_get(iahd, key_buf, ign)) {
 			idml_push(&list, ign);
 			count ++;
 		}
@@ -117,8 +117,8 @@ static inline void any_rand() {
 
 	idml_drop(&list);
 
-	if (iarhd != -1) {
-		lhash_get(iarhd, key_buf, ign);
+	if (iahd != -1) {
+		lhash_get(iahd, key_buf, ign);
 		printf("%u %u %s\n", tmp_id, ign, key_buf);
 		return;
 	}
@@ -133,11 +133,11 @@ static inline void mode1_get() {
 	c = hash_iter(ihd, &tmp_id, sizeof(tmp_id));
 
 	if (iahd != -1) {
-		while (lhash_next(&ign, &tmp_id, &c)) {
-			lhash_get(iahd, key_buf, tmp_id);
-			printf("%u %u %s\n", ign, tmp_id, key_buf);
-			count++;
-		}
+		while (lhash_next(&tmp_id, &ign, &c))
+			if (!uhash_get(iahd, key_buf, ign)) {
+				printf("%u %u %s\n", tmp_id, ign, key_buf);
+				count++;
+			}
 		goto end;
 	}
 
@@ -153,21 +153,29 @@ end:
 
 static inline void mode0_get() {
 	if (reverse) {
-		if (shash_get(rhd, &tmp_id, optarg)) {
-			printf("%u -1\n", tmp_id);
-			return;
-		}
-		printf("%u\n", tmp_id);
+		if (shash_get(rhd, &tmp_id, optarg))
+			printf("-1 -1\n");
+		else if (arhd != -1) {
+			shash_get(arhd, &ign, optarg);
+			printf("%u %u\n", tmp_id, ign);
+		} else
+			printf("%u %s\n", tmp_id, optarg);
 		return;
 	}
 
-	ign = strtoul(optarg, NULL, 10);
-	if (uhash_get(hd, &key_buf, ign)) {
+	ign = ahd_get(iqrhd, optarg);
+
+	if (uhash_get(ihd, key_buf, ign)) {
 		printf("%u -1\n", ign);
 		return;
 	}
 
-	printf("%u %s\n", ign, key_buf);
+	if (arhd == -1)
+		printf("%u %s\n", ign, key_buf);
+	else {
+		shash_get(arhd, &tmp_id, key_buf);
+		printf("%u %u %s\n", ign, tmp_id, key_buf);
+	}
 }
 
 // not affected by reverse
@@ -198,23 +206,19 @@ static inline void mode0_put() {
 	col = strchr(optarg, ':');
 	if (col) {
 		tmp_id = strtoul(optarg, NULL, 10);
+		*col = '\0';
 		col++;
+		lhash_put(hd, tmp_id, col);
 	} else {
 		tmp_id = lhash_new(hd, optarg);
 		col = optarg;
 	}
 
 	suhash_put(rhd, col, tmp_id);
-	uhash_put(hd, tmp_id, col, strlen(col) + 1);
 	printf("%u\n", tmp_id);
 }
 
-static inline void mode1_list_missing() {
-	if (mode != 1) {
-		fprintf(stderr, "list missing only possible in mode 1\n");
-		return;
-	}
-
+static inline void any_list_missing() {
 	if (iqhd == -1) {
 		fprintf(stderr, "list missing needs a corresponding database\n");
 		return;
@@ -222,20 +226,37 @@ static inline void mode1_list_missing() {
 
 	c = hash_iter(iqhd, NULL, 0);
 
+	if (iahd == -1) {
+		while (lhash_next(&ign, key_buf, &c)) {
+			if (uhash_get(ihd, key_buf, ign))
+				printf("%u %s\n", ign, key_buf);
+		}
+		return;
+	}
+
 	while (lhash_next(&ign, key_buf, &c)) {
-		if (uhash_get(ihd, key_buf, ign))
-			printf("%u %s\n", ign, key_buf);
+		if (uhash_get(ihd, key_buf, ign)) {
+			uhash_get(iahd, value_buf, ign);
+			printf("%u %s %s\n", ign, key_buf, value_buf);
+		}
 	}
 }
 
 static inline void mode1_list() {
-	c = hash_iter(hd, NULL, 0);
+	c = hash_iter(rhd, NULL, 0);
 
 	if (qhd != -1) {
-		while (lhash_next(&ign, &tmp_id, &c)) {
-			lhash_get(qhd, key_buf, ign);
-			printf("%u %u %s\n", ign, tmp_id, key_buf);
-		}
+		if (ahd == -1)
+			while (lhash_next(&ign, &tmp_id, &c)) {
+				lhash_get(qhd, key_buf, ign);
+				printf("%u %u %s\n", ign, tmp_id, key_buf);
+			}
+		else
+			while (lhash_next(&ign, &tmp_id, &c)) {
+				lhash_get(qhd, key_buf, ign);
+				lhash_get(ahd, value_buf, ign);
+				printf("%u %u %s %s\n", ign, tmp_id, key_buf, value_buf);
+			}
 		return;
 	}
 
@@ -255,14 +276,24 @@ static inline void mode0_list() { // no reverse
 	c = lhash_iter(hd);
 
 	if (qhd == -1) {
+		c = lhash_iter(hd);
 		while (lhash_next(&tmp_id, key_buf, &c))
 			printf("%u %s\n", tmp_id, key_buf);
 		return;
 	}
 
+	if (ahd == -1) {
+		while (lhash_next(&tmp_id, value_buf, &c)) {
+			lhash_get(qhd, key_buf, tmp_id);
+			printf("%u %s %s\n", tmp_id, key_buf, value_buf);
+		}
+		return;
+	}
+
 	while (lhash_next(&tmp_id, key_buf, &c)) {
-		lhash_get(qhd, value_buf, tmp_id);
-		printf("%u %s %s\n", tmp_id, value_buf, key_buf);
+		shash_get(qrhd, &tmp_id, key_buf);
+		lhash_get(ahd, value_buf, tmp_id);
+		printf("%u %s %s\n", tmp_id, key_buf, value_buf);
 	}
 }
 
@@ -278,7 +309,7 @@ main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
-	ahd = qhd = qrhd = arhd = iqrhd = iarhd = -1;
+	ahd = qhd = qrhd = arhd = iqrhd = -1;
 
 	while ((ch = getopt(argc, argv, optstr)) != -1)
 		switch (ch) {
@@ -292,11 +323,11 @@ main(int argc, char *argv[])
 			return EXIT_FAILURE;
 		case 'a':
 			ahd = lhash_cinit(0, optarg, "hd", fmode);
-			arhd = hash_cinit(optarg, "rhd", fmode, 0);
+			arhd = hash_cinit(optarg, "rhd", fmode, QH_DUP);
 			break;
 		case 'q':
 			qhd = lhash_cinit(0, optarg, "hd", fmode);
-			qrhd = hash_cinit(optarg, "rhd", fmode, 0);
+			qrhd = hash_cinit(optarg, "rhd", fmode, QH_DUP);
 			break;
 		case 'p':
 		case 'd':
@@ -316,17 +347,17 @@ main(int argc, char *argv[])
 		rhd = ahash_cinit(fname, "rhd", fmode);
 	} else {
 		hd = lhash_cinit(0, fname, "hd", fmode);
-		rhd = hash_cinit(fname, "rhd", fmode, 0);
+		rhd = hash_cinit(fname, "rhd", fmode, QH_DUP);
 	}
 
 	srandom(time(NULL));
 
-	iahd = ahd; iqrhd = qrhd; ihd = hd; iqhd = qhd; iarhd = arhd;
+	iahd = ahd; iqrhd = qrhd; ihd = hd; iqhd = qhd;
 
 	while ((ch = getopt(argc, argv, optstr)) != -1) {
 		switch (ch) {
 		case 'R': any_rand(); break;
-		case 'L': mode1_list_missing(); break;
+		case 'L': any_list_missing(); break;
 		case 'l': if (mode) mode1_list(); else mode0_list(); break;
 		case 'p': if (mode) mode1_put(); else mode0_put(); break;
 		case 'd': if (mode) mode1_delete(); else mode0_delete(); break;
@@ -335,9 +366,9 @@ main(int argc, char *argv[])
 			reverse = !reverse;
 
 			if (reverse) {
-				iqrhd = arhd; iahd = qhd; ihd = rhd; iqhd = ahd; iarhd = qrhd;
+				iqrhd = arhd; iahd = qhd; ihd = rhd; iqhd = ahd;
 			} else {
-				iqrhd = qrhd; iahd = ahd; ihd = hd; iqhd = qhd; iarhd = arhd;
+				iqrhd = qrhd; iahd = ahd; ihd = hd; iqhd = qhd;
 			}
 
 			break;
@@ -350,9 +381,4 @@ main(int argc, char *argv[])
 		hash_close(hd);
 
 	hash_close(rhd);
-
-	if (ahd != (unsigned) -1)
-		lhash_close(ahd);
-	if (qhd != (unsigned) -1)
-		hash_close(qhd);
 }

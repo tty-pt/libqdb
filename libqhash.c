@@ -81,7 +81,7 @@ hash_cinit(const char *file, const char *database, int mode, int flags)
 	_hash_put(ids_db, &db, sizeof(DB *), &id, sizeof(unsigned));
 
 	if (flags & QH_DUP)
-		if (db->set_flags(db, DB_DUPSORT))
+		if (db->set_flags(db, DB_DUP))
 			err(1, "hash_init: set_flags");
 
 	if (db->open(db, txnid, file, database, DB_HASH, DB_CREATE, mode))
@@ -338,9 +338,9 @@ hash_close(unsigned hd) {
 
 void lhash_close(unsigned hd) {
 	unsigned plast;
-	lhash_get(hd, &plast, (unsigned) -1);
-	if (plast != lh_idms[hd].last)
-		uhash_put(hd, (unsigned) -1, &lh_idms[hd].last, sizeof(unsigned));
+	if (!uhash_get(hd, &plast, (unsigned) -1))
+		uhash_del(hd, -1);
+	uhash_put(hd, (unsigned) -1, &lh_idms[hd].last, sizeof(unsigned));
 	hash_close(hd);
 }
 
@@ -378,12 +378,11 @@ unsigned idm_new(struct idm *idm) {
 }
 
 unsigned lhash_cinit(size_t item_len, const char *file, const char *database, int mode) {
-	unsigned hd = hash_cinit(file, database, mode, 0), last;
+	unsigned hd = hash_cinit(file, database, mode, QH_DUP), last;
 	unsigned ign;
 	lh_idms[hd].last = 0;
 	uhash_get(hd, &lh_idms[hd].last, (unsigned) -1);
 	lh_lengths[hd] = item_len;
-	uhash_put(hd, (unsigned) -1, &lh_idms[hd].last, sizeof(unsigned));
 	SLIST_INIT(&lh_idms[hd].free);
 
 	for (last = 0; last < lh_idms[hd].last; last++)
@@ -405,8 +404,6 @@ static unsigned lh_len(unsigned hd, char *item) {
 unsigned lhash_new(unsigned hd, void *item) {
 	unsigned id = idm_new(&lh_idms[hd]);
 	uhash_put(hd, id, item, lh_len(hd, item));
-	uhash_del(hd, (unsigned) -1);
-	uhash_put(hd, (unsigned) -1, &lh_idms[hd].last, sizeof(unsigned));
 	return id;
 }
 
@@ -416,5 +413,10 @@ int lhash_del(unsigned hd, unsigned ref) {
 }
 
 int lhash_put(unsigned hd, unsigned id, void *source) {
+	unsigned last;
+	if (lh_idms[hd].last < id)
+		lh_idms[hd].last = id + 1;
+	for (last = lh_idms[hd].last; last < id; last++)
+		idml_push(&lh_idms[hd].free, last);
 	return uhash_put(hd, id, source, lh_len(hd, source));
 }
