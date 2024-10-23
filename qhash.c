@@ -25,8 +25,8 @@ gen_lookup_t *gen_lookup;
 unsigned iqhds, qhds, iahds, ahds;
 
 unsigned hd, rhd, qhd, qrhd, ahd, arhd, ihd, irhd, iqrhd, iqhd;
-unsigned tmp_id, mode = 0, reverse = 0, ign, aux;
-char a_buf[BUFSIZ], b_buf[BUFSIZ], alt_buf[BUFSIZ], *col;
+unsigned tmp_id, mode = 0, reverse = 0, aux, ign;
+char a_buf[BUFSIZ], b_buf[BUFSIZ], alt_buf[BUFSIZ], *col, *key_ptr, *value_ptr;
 struct hash_cursor c, c2;
 
 void
@@ -82,12 +82,10 @@ char *m1_lookup(unsigned hd, char *str) {
 
 	if (hd == -1 || reverse) {
 		ret = strtoul(str, NULL, 10);
-		printf("%u", ret);
 		memcpy(a_buf, &ret, sizeof(unsigned));
 		return a_buf;
 	}
 
-	printf("%s", str);
 	if (shash_get(hd, a_buf, str))
 		return NULL;
 	return a_buf;
@@ -172,10 +170,11 @@ static inline void mode0_delete() {
 }
 
 static inline unsigned assoc_print(unsigned *count, char *alt_key) {
-	unsigned didnt = 1;
+	unsigned didnt;
 	c2 = lhash_iter(iahds);
 	while (lhash_next(&aux, &aux_hdp, &c2)) {
 		putchar(' ');
+		didnt = 1;
 		if (alt_get(aux_hdp.hd, alt_buf, alt_key)) {
 			s_print("-1");
 			continue;
@@ -190,42 +189,35 @@ static inline unsigned assoc_print(unsigned *count, char *alt_key) {
 }
 
 static inline void any_rand() {
-	struct idm_list list = idml_init();
-	unsigned count = 0, rand, ignore;
+	unsigned count = 0, rand;
+	char *alt_key = mode ? gen_lookup(iqrhd, optarg) : NULL;
 
-	char *alt_key = gen_lookup(iqrhd, optarg);
+	c = gen_iter(ihd, alt_key);
 
-	if (!alt_key) {
-		printf("%s -1\n", optarg);
-		return;
-	}
-
-	c = gen_iter(ihd, a_buf);
-
-	while (lhash_next((unsigned *) a_buf, b_buf, &c)) {
-		idml_push(&list, ign);
+	while (lhash_next((unsigned *) a_buf, b_buf, &c))
 		count ++;
-	}
 
 	if (count == 0) {
-		printf("%s -1\n", optarg);
+		printf("-1\n");
 		return;
 	}
 
 	rand = random() % count;
 
-	while ((ign = idml_pop(&list)) != ((unsigned) -1)) {
+	c = gen_iter(ihd, alt_key);
+
+	while (lhash_next((unsigned *) b_buf, a_buf, &c)) {
 		count --;
-		if (count <= rand)
+		if (count <= rand) {
+			hash_fin(&c);
 			break;
+		}
 	}
 
-	idml_drop(&list);
-
-	key_print(a_buf);
+	key_print(value_ptr);
 	putchar(' ');
-	value_print(b_buf);
-	assoc_print(&ignore, alt_key);
+	value_print(key_ptr);
+	assoc_print(&count, value_ptr);
 	printf("\n");
 }
 
@@ -236,12 +228,12 @@ static void gen_get(char *str) {
 		printf(" -1\n");
 		return;
 	}
-	c = gen_iter(ihd, a_buf);
+	c = gen_iter(ihd, str ? alt_key : NULL);
 
 	while (lhash_next((unsigned *) a_buf, b_buf, &c)) {
-		key_print(a_buf);
+		key_print(key_ptr);
 		putchar(' ');
-		value_print(b_buf);
+		value_print(value_ptr);
 		didnt = assoc_print(&count, alt_key);
 		printf("\n");
 	}
@@ -389,6 +381,7 @@ main(int argc, char *argv[])
 	srandom(time(NULL));
 
 	iqrhd = qrhd; ihd = hd; iqhd = qhd;
+	key_ptr = a_buf; value_ptr = b_buf;
 
 	while ((ch = getopt(argc, argv, optstr)) != -1) {
 		switch (ch) {
@@ -401,9 +394,9 @@ main(int argc, char *argv[])
 		case 'r':
 			reverse = !reverse;
 
-			aux_print = key_print;
-			key_print = value_print;
-			value_print = aux_print;
+			col = value_ptr;
+			value_ptr = key_ptr;
+			key_ptr = col;
 
 			gen_iter_aux = gen_iter;
 			gen_iter = gen_iter_next;
