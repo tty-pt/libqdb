@@ -62,17 +62,17 @@ Then insert pets into the pet database:
 qhash -p cat -p dog pets.db # example output: 2 and 3
 ```
 
-And finally say that Mathew owns both:
+And finally create a database that says that Mathew owns both:
 ```sh
 qhash -m1 -p 4:2 -p 4:3 assoc.db
 ```
 
 Or list all of Mathew's pets (names included):
 ```sh
-qhash -m1 -a pets.db -g4 assoc.db
+qhash -a pets.db -g4 assoc.db
 ```
 
 And now get a random pet name that corresponds to Mathew:
 ```sh
-qhash -m1 -q owners.db -a pets.db -RMathew assoc.db # example output: dog
+qhash -q owners.db -a pets.db -RMathew assoc.db # example output: dog
 ```

@@ -17,10 +17,15 @@ enum qhash_priv_flags {
 	QH_NOT_FIRST = 1,
 };
 
+struct meta {
+	size_t len;
+	int flags;
+	assoc_t assoc;
+	struct idm idm;
+};
+
 static DB *hash_dbs[HASH_DBS_MAX], *ids_db;
-static assoc_t assoc[HASH_DBS_MAX];
-static struct idm lh_idms[HASH_DBS_MAX];
-size_t lh_lengths[HASH_DBS_MAX];
+struct meta meta[HASH_DBS_MAX];
 
 static struct idm idm;
 
@@ -67,11 +72,12 @@ hash_cinit(const char *file, const char *database, int mode, int flags)
 		if (ids_db->open(ids_db, txnid, NULL, NULL, DB_HASH, DB_CREATE, 644))
 			err(1, "hash_init: open ids_db");
 
-		memset(lh_lengths, 0, sizeof(lh_lengths));
+		memset(meta, 0, sizeof(meta));
 	}
 
 	hash_first = 0;
 	id = idm_new(&idm);
+	meta[id].flags = flags;
 
 	if (db_create(&hash_dbs[id], NULL, 0))
 		err(1, "hash_init: db_create");
@@ -177,7 +183,7 @@ map_assoc(DB *sec, const DBT *key, const DBT *data, DBT *result)
 	memset(result, 0, sizeof(DBT));
 	unsigned hd;
 	_hash_get(ids_db, &hd, &sec, sizeof(DB *)); // assumed == 0
-	assoc[hd](&result->data, &result->size, key->data, data->data);
+	meta[hd].assoc(&result->data, &result->size, key->data, data->data);
 	return 0;
 }
 
@@ -186,23 +192,11 @@ hash_assoc(unsigned hd, unsigned link, assoc_t cb)
 {
 	DB *db = hash_dbs[hd];
 	DB *ldb = hash_dbs[link];
-	assoc[hd] = cb;
+	meta[hd].assoc = cb;
+	meta[hd].flags |= QH_SEC;
 
 	if (ldb->associate(ldb, NULL, db, map_assoc, DB_CREATE | DB_IMMUTABLE_KEY))
 		err(1, "hash_assoc");
-}
-
-int
-hash_del(unsigned hd, void *key_r, size_t len)
-{
-	DB *db = hash_dbs[hd];
-	DBT key;
-
-	memset(&key, 0, sizeof(key));
-	key.data = key_r;
-	key.size = len;
-
-	return db->del(db, txnid, &key, 0);
 }
 
 int
@@ -238,10 +232,17 @@ hash_vdel(unsigned hd, void *key_data, size_t key_size, void *value_data, size_t
 	return ret == DB_NOTFOUND ? 0 : ret;
 }
 
+typedef int get_t(DBC *dbc, DBT *key, DBT *pkey, DBT *data, unsigned flags);
+
+int primary_get(DBC *dbc, DBT *key, DBT *pkey, DBT *data, unsigned flags) {
+	return dbc->get(dbc, pkey, data, flags);
+}
+
 struct hash_internal {
 	unsigned hd;
-	DBT data, key;
+	DBT data, key, pkey;
 	DBC *cursor;
+	get_t *get;
 };
 
 struct hash_cursor
@@ -253,10 +254,14 @@ hash_iter(unsigned hd, void *key, size_t key_len) {
 	DB *db = hash_dbs[hd];
 	internal->cursor = NULL;
 	db->cursor(db, NULL, &internal->cursor, 0);
+	memset(&internal->pkey, 0, sizeof(DBT));
 	memset(&internal->key, 0, sizeof(DBT));
 	memset(&internal->data, 0, sizeof(DBT));
-	internal->key.data = key;
-	internal->key.size = key_len;
+	internal->pkey.data = internal->key.data = key;
+	internal->pkey.size = internal->key.size = key_len;
+	internal->get = (meta[hd].flags & QH_SEC)
+		? internal->cursor->pget
+		: primary_get;
 	cur.flags = 0;
 	if (key)
 		cur.flags = QH_DUP;
@@ -284,20 +289,23 @@ hash_next(void *key, void *value, struct hash_cursor *cur)
 	} else if (cur->flags & QH_NOT_FIRST)
 		flags = DB_NEXT;
 	cur->flags |= QH_NOT_FIRST;
-	if ((ret = internal->cursor->get(internal->cursor, &internal->key, &internal->data, flags))) {
+
+	if ((ret = internal->get(internal->cursor, &internal->key, &internal->pkey, &internal->data, flags))) {
 		if (ret != DB_NOTFOUND)
 			fprintf(stderr, "hash_cnext: %u %d %s\n", internal->hd, cur->flags, db_strerror(ret));
 		internal->cursor->close(internal->cursor);
 		free(internal);
 		cur->internal = NULL;
 		return 0;
-	} else {
-		memcpy(key, internal->key.data, internal->key.size);
-		memset(&internal->key, 0, sizeof(DBT));
+	} else if (key) {
+		memcpy(key, internal->pkey.data, internal->pkey.size);
 		memcpy(value, internal->data.data, internal->data.size);
-		memset(&internal->data, 0, sizeof(DBT));
-		return 1;
 	}
+
+	memset(&internal->key, 0, sizeof(DBT));
+	memset(&internal->pkey, 0, sizeof(DBT));
+	memset(&internal->data, 0, sizeof(DBT));
+	return 1;
 }
 
 int
@@ -340,7 +348,7 @@ void lhash_close(unsigned hd) {
 	unsigned plast;
 	if (!uhash_get(hd, &plast, (unsigned) -1))
 		uhash_del(hd, -1);
-	uhash_put(hd, (unsigned) -1, &lh_idms[hd].last, sizeof(unsigned));
+	uhash_put(hd, (unsigned) -1, &meta[hd].idm.last, sizeof(unsigned));
 	hash_close(hd);
 }
 
@@ -378,22 +386,23 @@ unsigned idm_new(struct idm *idm) {
 }
 
 unsigned lhash_cinit(size_t item_len, const char *file, const char *database, int mode) {
-	unsigned hd = hash_cinit(file, database, mode, QH_DUP), last;
+	unsigned hd = hash_cinit(file, database, mode, 0), last;
 	unsigned ign;
-	lh_idms[hd].last = 0;
-	uhash_get(hd, &lh_idms[hd].last, (unsigned) -1);
-	lh_lengths[hd] = item_len;
-	SLIST_INIT(&lh_idms[hd].free);
+	meta[hd].idm.last = 0;
+	uhash_get(hd, &meta[hd].idm.last, (unsigned) -1);
+	meta[hd].flags = 0;
+	meta[hd].len = item_len;
+	SLIST_INIT(&meta[hd].idm.free);
 
-	for (last = 0; last < lh_idms[hd].last; last++)
+	for (last = 0; last < meta[hd].idm.last; last++)
 		if (uhash_get(hd, &ign, last))
-			idml_push(&lh_idms[hd].free, last);
+			idml_push(&meta[hd].idm.free, last);
 
 	return hd;
 }
 
 static unsigned lh_len(unsigned hd, char *item) {
-	size_t len = lh_lengths[hd];
+	size_t len = meta[hd].len;
 
 	if (len != 0)
 		return len;
@@ -402,21 +411,21 @@ static unsigned lh_len(unsigned hd, char *item) {
 }
 
 unsigned lhash_new(unsigned hd, void *item) {
-	unsigned id = idm_new(&lh_idms[hd]);
+	unsigned id = idm_new(&meta[hd].idm);
 	uhash_put(hd, id, item, lh_len(hd, item));
 	return id;
 }
 
-int lhash_del(unsigned hd, unsigned ref) {
-	idm_del(&lh_idms[hd], ref);
+void lhash_del(unsigned hd, unsigned ref) {
+	idm_del(&meta[hd].idm, ref);
 	return uhash_del(hd, ref);
 }
 
 int lhash_put(unsigned hd, unsigned id, void *source) {
 	unsigned last;
-	if (lh_idms[hd].last < id)
-		lh_idms[hd].last = id + 1;
-	for (last = lh_idms[hd].last; last < id; last++)
-		idml_push(&lh_idms[hd].free, last);
+	if (meta[hd].idm.last <= id)
+		meta[hd].idm.last = id + 1;
+	for (last = meta[hd].idm.last; last < id; last++)
+		idml_push(&meta[hd].idm.free, last);
 	return uhash_put(hd, id, source, lh_len(hd, source));
 }

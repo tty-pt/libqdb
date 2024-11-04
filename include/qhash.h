@@ -64,6 +64,7 @@ unsigned idm_new(struct idm *idm);
 
 enum qhash_flags {
 	QH_DUP = 2,
+	QH_SEC = 4, // secondary
 };
 
 struct hash_cursor {
@@ -94,9 +95,6 @@ int hash_pget(unsigned hd, void *pkey, void *key, size_t key_len);
 /* drop the values from a hash */
 int hash_drop(unsigned hd);
 
-/* delete a value from an hash */
-int hash_del(unsigned hd, void *key, size_t key_len);
-
 /* delete a certain value from a hash that supports dupes */
 int hash_vdel(unsigned hd, void *key_data, size_t key_size, void *value_data, size_t value_size);
 
@@ -111,6 +109,14 @@ int hash_next(void *key, void *value, struct hash_cursor *cur);
 
 /* delete value under cursor */
 int hash_cdel(struct hash_cursor *cur);
+
+/* delete a value from an hash */
+static inline void hash_del(unsigned hd, void *key_r, size_t len) {
+	struct hash_cursor c = hash_iter(hd, key_r, len);
+
+	while (hash_next(NULL, NULL, &c))
+		hash_cdel(&c);
+}
 
 /* finalize iteration if exiting it earlier */
 void hash_fin(struct hash_cursor *cur);
@@ -148,7 +154,7 @@ static inline int uhash_put(unsigned hd, unsigned ref, void *value, unsigned val
 }
 
 /* delete a value from an uhash */
-static inline int uhash_del(unsigned hd, unsigned key) {
+static inline void uhash_del(unsigned hd, unsigned key) {
 	return hash_del(hd, &key, sizeof(key));
 }
 
@@ -185,7 +191,7 @@ static inline int lhash_get(unsigned hd, void *target, unsigned ref) {
 int lhash_put(unsigned hd, unsigned ref, void *source);
 
 /* delete lhash item */
-int lhash_del(unsigned hd, unsigned ref);
+void lhash_del(unsigned hd, unsigned ref);
 
 /* start iterating through lhash */
 static inline struct hash_cursor lhash_iter(unsigned hd) {
@@ -194,9 +200,18 @@ static inline struct hash_cursor lhash_iter(unsigned hd) {
 
 /* iterate through lhash */
 static inline int lhash_next(unsigned *key, void *value, struct hash_cursor *cur) {
-	int ret = hash_next(key, value, cur);
-	if (ret && *key == (unsigned) -1)
-		ret = hash_next(key, value, cur);
+	int ret;
+
+	while ((ret = hash_next(key, value, cur))) {
+		switch (*key) {
+			case (unsigned) -1:
+			case (unsigned) -2:
+				continue;
+			default: break;
+		}
+		break;
+	}
+
 	return ret;
 }
 
@@ -253,13 +268,18 @@ static inline ssize_t shash_get(unsigned hd, void *value, char *key) {
 	return hash_get(hd, value, key, strlen(key) + 1);
 }
 
+/* get a primary key from a secondary hash key */
+static inline int shash_pget(unsigned hd, void *pkey, char *ref) {
+	return hash_pget(hd, pkey, ref, strlen(ref) + 1);
+}
+
 /* check if shash key exists */
 static inline int shash_exists(unsigned hd, char *key) {
 	return hash_exists(hd, key, strlen(key) + 1);
 }
 
 /* delete a value from an shash */
-static inline int shash_del(unsigned hd, char *key) {
+static inline void shash_del(unsigned hd, char *key) {
 	return hash_del(hd, key, strlen(key) + 1);
 }
 
