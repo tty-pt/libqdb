@@ -144,16 +144,17 @@ int u_get(unsigned hd, void *value, void *key) {
 	return uhash_get(aux_hdp.hd[0], value, * (unsigned *) key);
 }
 
-static inline void *rec_query(unsigned qhds, char *buf, unsigned tmprev) {
+static inline void *rec_query(unsigned qhds, char *tbuf, char *buf, unsigned tmprev) {
 	struct hash_cursor c2 = lhash_iter(qhds);
 	unsigned aux;
 
 	while (lhash_next(&aux, &aux_hdp, &c2)) {
 		tmprev = !tmprev;
-		if (m0_gen[!tmprev].get(aux_hdp.hd[tmprev], buf, buf)) {
+		if (m0_gen[!tmprev].get(aux_hdp.hd[tmprev], tbuf, buf)) {
 			hash_fin(&c2);
 			return NULL;
 		}
+		buf = tbuf;
 	}
 
 	return buf;
@@ -171,7 +172,7 @@ inline static char *_gen_lookup(char *buf, unsigned *tmprev_r, char *str, unsign
 	}
 
 	if (qhds_n)
-		ret = rec_query(qhds, buf, !cond);
+		ret = rec_query(qhds, buf, buf, !cond);
 	else
 		ret = buf;
 
@@ -211,6 +212,20 @@ static inline void gen_del() {
 		gen.del(prim.hd[!tmprev_q], value_buf);
 }
 
+static inline int assoc_exists() {
+	static char alt_buf[BUFSIZ];
+	unsigned aux;
+	struct hash_cursor c2 = lhash_iter(ahds);
+
+	while (lhash_next(&aux, &aux_hdp, &c2))
+		if (u_get(aux_hdp.hd[0], alt_buf, key_buf)) {
+			hash_fin(&c2);
+			return 0;
+		}
+
+	return 1;
+}
+
 static inline void assoc_print() {
 	static char alt_buf[BUFSIZ];
 	unsigned aux;
@@ -234,7 +249,8 @@ static inline void gen_rand() {
 	c = gen.iter(prim.hd[!tmprev_q], iter_key);
 
 	while (lhash_next((unsigned *) key_buf, value_buf, &c))
-		count ++;
+		if (assoc_exists())
+			count ++;
 
 	if (count == 0) {
 		printf("-1\n");
@@ -246,7 +262,9 @@ static inline void gen_rand() {
 	c = gen.iter(prim.hd[!tmprev_q], iter_key);
 
 	while (lhash_next((unsigned *) key_buf, value_buf, &c))
-		if ((--count) <= rand) {
+		if (!assoc_exists())
+			continue;
+		else if ((--count) <= rand) {
 			hash_fin(&c);
 			break;
 		}
@@ -263,23 +281,42 @@ static inline void gen_rand() {
 	printf("\n");
 }
 
+static inline void _gen_get() {
+	u_print(key_buf);
+	putchar(' ');
+	gen.value_print(value_buf);
+	assoc_print();
+	printf("\n");
+}
+
 static void gen_get(char *str) {
 	char *iter_key = gen_lookup(str);
 	struct hash_cursor c;
 
-	if (str && !iter_key) {
+	if (!iter_key) {
 		printf("-1\n");
 		return;
 	}
 
-	c = gen.iter(prim.hd[!tmprev_q], str ? iter_key : NULL);
+	c = gen.iter(prim.hd[!tmprev_q], iter_key);
+
+	while (lhash_next((unsigned *) key_buf, value_buf, &c))
+		if (assoc_exists())
+			_gen_get();
+}
+
+static void gen_list() {
+	struct hash_cursor c;
+	unsigned cond;
+
+	gen_lookup(NULL);
+	cond = gen.cond(qhds_n, 1);
+
+	c = gen.iter(prim.hd[!tmprev_q], NULL);
 
 	while (lhash_next((unsigned *) key_buf, value_buf, &c)) {
-		u_print(key_buf);
-		putchar(' ');
-		gen.value_print(value_buf);
-		assoc_print();
-		printf("\n");
+		rec_query(qhds, key_buf, value_buf, !cond);
+		_gen_get();
 	}
 }
 
@@ -303,7 +340,7 @@ static inline void gen_list_missing() {
 		struct hash_cursor c2 = lhash_iter(qhds);
 
 		while (lhash_next(&aux, &aux_hdp, &c2))
-			if (lhash_get(aux_hdp.hd[tmprev_q], value_buf, * (unsigned *) key_buf)) {
+			if (m0_gen[tmprev_q].get(aux_hdp.hd[!tmprev_q], key_buf, value_buf)) {
 				u_print(key_buf);
 				putchar(' ');
 				gen.value_print(value_buf);
@@ -331,8 +368,9 @@ void m1_assoc_rhd(void **data, uint32_t *len, void *key, void *value) {
 }
 
 unsigned gen_open(char *fname, unsigned mode) {
-	static int fmode = 0644;
+	static int fmode = 0664;
 	unsigned existed = access(fname, F_OK) == 0;
+
 	aux_hdp.phd = lhash_cinit(0, fname, "phd", fmode);
 	if (existed)
 		lhash_get(aux_hdp.phd, &mode, -2);
@@ -357,6 +395,7 @@ main(int argc, char *argv[])
 {
 	static char *optstr = "la:q:p:d:g:m:rR:L:?";
 	char *fname = argv[argc - 1], ch;
+	int fmode = 0444;
 
 	if (argc < 2) {
 		usage(*argv);
@@ -391,6 +430,7 @@ main(int argc, char *argv[])
 			break;
 		case 'p':
 		case 'd':
+			fmode = 0644;
 		case 'l':
 		case 'L':
 		case 'R':
@@ -409,7 +449,7 @@ main(int argc, char *argv[])
 	while ((ch = getopt(argc, argv, optstr)) != -1) switch (ch) {
 	case 'R': gen_rand(); break;
 	case 'L': gen_list_missing(); break;
-	case 'l': gen_get(NULL); break;
+	case 'l': gen_list(); break;
 	case 'p': gen_put(); break;
 	case 'd': gen_del(); break;
 	case 'g': gen_get(optarg); break;
