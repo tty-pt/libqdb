@@ -1,8 +1,11 @@
 #include "./include/qhash.h"
-#include <err.h>
+#include <errno.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
-#include <stdlib.h>
+#include <syslog.h>
 
 #ifdef __OpenBSD__
 #include <db4/db.h>
@@ -33,6 +36,30 @@ static unsigned hash_n = 0;
 static int hash_first = 1;
 void *txnid = NULL;
 
+static void
+hash_logger_stderr(int type, const char *fmt, ...)
+{
+	va_list va;
+	va_start(va, fmt);
+	int ret = vfprintf(stderr, fmt, va);
+	va_end(va);
+}
+
+log_t hashlog = hash_logger_stderr;
+
+static inline void hashlog_perror(char *str) {
+        hashlog(LOG_ERR, "%s: %s", str, strerror(errno));
+}
+
+static inline void hashlog_err(char *str) {
+        hashlog_perror(str);
+        exit(EXIT_FAILURE);
+}
+
+void hash_set_logger(log_t logger) {
+	hashlog = logger;
+}
+
 static inline int
 _hash_put(DB *db, void *key_r, size_t key_len, void *value, size_t value_len)
 {
@@ -49,12 +76,12 @@ _hash_put(DB *db, void *key_r, size_t key_len, void *value, size_t value_len)
 	int flags, dupes;
 
 	if (db->get_flags(db, &flags))
-		err(1, "hash_put get_flags");
+		hashlog_err("hash_put get_flags");
 	dupes = flags & DB_DUP;
 
 	ret = db->put(db, txnid, &key, &data, 0);
 	if (ret && (ret != DB_KEYEXIST || !dupes))
-		warn("hash_put");
+		hashlog(LOG_WARNING, "hash_put");
 	return ret;
 }
 
@@ -67,10 +94,10 @@ hash_cinit(const char *file, const char *database, int mode, int flags)
 	if (hash_first) {
 		idm = idm_init();
 		if (db_create(&ids_db, NULL, 0))
-			err(1, "hash_init: db_create ids_db");
+			hashlog_err("hash_init: db_create ids_db");
 
 		if (ids_db->open(ids_db, txnid, NULL, NULL, DB_HASH, DB_CREATE, 644))
-			err(1, "hash_init: open ids_db");
+			hashlog_err("hash_init: open ids_db");
 
 		memset(meta, 0, sizeof(meta));
 	}
@@ -80,7 +107,7 @@ hash_cinit(const char *file, const char *database, int mode, int flags)
 	meta[id].flags = flags;
 
 	if (db_create(&hash_dbs[id], NULL, 0))
-		err(1, "hash_init: db_create");
+		hashlog_err("hash_init: db_create");
 
 	// this is needed for associations
 	db = hash_dbs[id];
@@ -88,10 +115,10 @@ hash_cinit(const char *file, const char *database, int mode, int flags)
 
 	if (flags & QH_DUP)
 		if (db->set_flags(db, DB_DUP))
-			err(1, "hash_init: set_flags");
+			hashlog_err("hash_init: set_flags");
 
 	if (db->open(db, txnid, file, database, DB_HASH, DB_CREATE, mode))
-		err(1, "hash_init: open");
+		hashlog_err("hash_init: open");
 
 	return id;
 }
@@ -119,7 +146,7 @@ static inline void * __hash_get(DB *db, size_t *size, void *key_r, size_t key_le
 	if (ret == DB_NOTFOUND)
 		return NULL;
 	else if (ret)
-		err(1, "hash_get");
+		hashlog_err("hash_get");
 
 	*size = data.size;
 	return data.data;
@@ -171,7 +198,7 @@ int hash_pget(unsigned hd, void *pkey_r, void *key_r, size_t key_len) {
 	if (ret == DB_NOTFOUND)
 		return 1;
 	else if (ret)
-		err(1, "hash_get");
+		hashlog_err("hash_get");
 
 	memcpy(pkey_r, pkey.data, pkey.size);
 	return 0;
@@ -196,7 +223,7 @@ hash_assoc(unsigned hd, unsigned link, assoc_t cb)
 	meta[hd].flags |= QH_SEC;
 
 	if (ldb->associate(ldb, NULL, db, map_assoc, DB_CREATE | DB_IMMUTABLE_KEY))
-		err(1, "hash_assoc");
+		hashlog_err("hash_assoc");
 }
 
 int
@@ -208,7 +235,7 @@ hash_vdel(unsigned hd, void *key_data, size_t key_size, void *value_data, size_t
 	int ret, flags = DB_SET;
 
 	if ((ret = db->cursor(db, txnid, &cursor, 0)) != 0) {
-		fprintf(stderr, "cursor: %s\n", db_strerror(ret));
+		hashlog(LOG_ERR, "cursor: %s", db_strerror(ret));
 		return ret;
 	}
 
@@ -292,7 +319,7 @@ hash_next(void *key, void *value, struct hash_cursor *cur)
 
 	if ((ret = internal->get(internal->cursor, &internal->key, &internal->pkey, &internal->data, flags))) {
 		if (ret != DB_NOTFOUND)
-			fprintf(stderr, "hash_cnext: %u %d %s\n", internal->hd, cur->flags, db_strerror(ret));
+			hashlog(LOG_ERR, "hash_cnext: %u %d %s", internal->hd, cur->flags, db_strerror(ret));
 		internal->cursor->close(internal->cursor);
 		free(internal);
 		cur->internal = NULL;
@@ -321,7 +348,7 @@ int hash_drop(unsigned hd) {
 	int ret, flags = DB_FIRST;
 
 	if ((ret = db->cursor(db, txnid, &cursor, 0)) != 0) {
-		fprintf(stderr, "hash_drop: cursor: %s\n", db_strerror(ret));
+		hashlog(LOG_ERR, "hash_drop: cursor: %s\n", db_strerror(ret));
 		return ret;
 	}
 

@@ -23,6 +23,10 @@ struct idm {
 	unsigned last;
 };
 
+typedef void (*log_t)(int type, const char *fmt, ...);
+
+void hash_set_logger(log_t logger);
+
 /* initialize id management list */
 static inline struct idm_list idml_init() {
 	struct idm_list idml;
