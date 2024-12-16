@@ -35,6 +35,7 @@ static struct idm idm;
 static unsigned hash_n = 0;
 static int hash_first = 1;
 void *txnid = NULL;
+DB_ENV *env;
 
 static void
 hash_logger_stderr(int type, const char *fmt, ...)
@@ -93,7 +94,7 @@ hash_cinit(const char *file, const char *database, int mode, int flags)
 
 	if (hash_first) {
 		idm = idm_init();
-		if (db_create(&ids_db, NULL, 0))
+		if (db_create(&ids_db, env, 0))
 			hashlog_err("hash_init: db_create ids_db");
 
 		if (ids_db->open(ids_db, txnid, NULL, NULL, DB_HASH, DB_CREATE, 644))
@@ -106,7 +107,7 @@ hash_cinit(const char *file, const char *database, int mode, int flags)
 	id = idm_new(&idm);
 	meta[id].flags = flags;
 
-	if (db_create(&hash_dbs[id], NULL, 0))
+	if (db_create(&hash_dbs[id], env, 0))
 		hashlog_err("hash_init: db_create");
 
 	// this is needed for associations
@@ -455,4 +456,14 @@ int lhash_put(unsigned hd, unsigned id, void *source) {
 	for (last = meta[hd].idm.last; last < id; last++)
 		idml_push(&meta[hd].idm.free, last);
 	return uhash_put(hd, id, source, lh_len(hd, source));
+}
+
+void hash_env_set(void *value) {
+	env = (DB_ENV *) value;
+}
+
+void *hash_env_pop() {
+	DB_ENV *ret = env;
+	env = NULL;
+	return ret;
 }

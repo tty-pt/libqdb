@@ -353,4 +353,7 @@ suhash_table(int hd, char *table[]) {
 	}
 }
 
+void hash_env_set(void *value);
+void *hash_env_pop();
+
 #endif
