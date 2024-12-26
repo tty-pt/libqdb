@@ -456,8 +456,8 @@ main(int argc, char *argv[])
 	case 'r': reverse = !reverse; break;
 	}
 
-	lhash_close(prim.phd);
-
-	hash_close(prim.hd[0]);
-	hash_close(prim.hd[1]);
+	lhash_flush(prim.phd);
+	hash_close(prim.phd, 0);
+	hash_close(prim.hd[0], 0);
+	hash_close(prim.hd[1], 0);
 }

@@ -106,7 +106,7 @@ int hash_vdel(unsigned hd, void *key_data, size_t key_size, void *value_data, si
 struct hash_cursor hash_iter(unsigned hd, void *key, size_t key_len);
 
 /* close a hash */
-void hash_close(unsigned hd);
+void hash_close(unsigned hd, unsigned flags);
 
 /* get next value from hash iteration */
 int hash_next(void *key, void *value, struct hash_cursor *cur);
@@ -219,7 +219,7 @@ static inline int lhash_next(unsigned *key, void *value, struct hash_cursor *cur
 	return ret;
 }
 
-void lhash_close(unsigned hd);
+void lhash_flush(unsigned hd);
 
 /*
  * ASSOCIATION HASH TABLE (AHASH) METHODS

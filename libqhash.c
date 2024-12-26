@@ -366,18 +366,17 @@ int hash_drop(unsigned hd) {
 }
 
 void
-hash_close(unsigned hd) {
+hash_close(unsigned hd, unsigned flags) {
 	DB *db = hash_dbs[hd];
-	db->close(db, 0);
+	db->close(db, flags);
 	idm_del(&idm, hd);
 }
 
-void lhash_close(unsigned hd) {
+void lhash_flush(unsigned hd) {
 	unsigned plast;
 	if (!uhash_get(hd, &plast, (unsigned) -1))
 		uhash_del(hd, -1);
 	uhash_put(hd, (unsigned) -1, &meta[hd].idm.last, sizeof(unsigned));
-	hash_close(hd);
 }
 
 void
