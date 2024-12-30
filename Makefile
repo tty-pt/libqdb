@@ -4,6 +4,8 @@ realpwd != pwd
 realpwd != realpath ${realpwd}
 debug := -fsanitize=address -fstack-protector-strong
 
+all: libqhash.so qhash
+
 libqhash.so: libqhash.c include/qhash.h
 	${CC} -o $@ libqhash.c -I/usr/local/include -g -O3 -fPIC -shared
 
@@ -24,4 +26,4 @@ install-bin: qhash
 clean:
 	rm qhash libqhash.so || true
 
-.PHONY: install install-bin clean
+.PHONY: all install install-bin clean
