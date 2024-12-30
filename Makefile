@@ -1,11 +1,14 @@
 PREFIX ?= /usr/local
-LIBDIR := $(DESTDIR)${PREFIX}/lib
+LIBDIR := ${DESTDIR}${PREFIX}/lib
+realpwd != pwd
+realpwd != realpath ${realpwd}
+debug := -fsanitize=address -fstack-protector-strong
 
 libqhash.so: libqhash.c include/qhash.h
 	${CC} -o $@ libqhash.c -I/usr/local/include -g -O3 -fPIC -shared
 
 qhash: qhash.c include/qhash.h
-	${CC} -o $@ qhash.c -L/usr/local/lib -g -O3 -lqhash -ldb
+	${CC} -o $@ qhash.c -L/usr/local/lib -Wl,-rpath,/usr/local/lib -g -O3 -lqhash -ldb
 
 install: libqhash.so
 	install -d ${DESTDIR}${PREFIX}/lib/pkgconfig

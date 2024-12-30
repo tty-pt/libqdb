@@ -414,6 +414,7 @@ unsigned idm_new(struct idm *idm) {
 
 unsigned lhash_cinit(size_t item_len, const char *file, const char *database, int mode) {
 	unsigned hd = hash_cinit(file, database, mode, 0), last;
+	DB *db = hash_dbs[hd];
 	unsigned ign;
 	meta[hd].idm.last = 0;
 	uhash_get(hd, &meta[hd].idm.last, (unsigned) -1);
@@ -421,9 +422,12 @@ unsigned lhash_cinit(size_t item_len, const char *file, const char *database, in
 	meta[hd].len = item_len;
 	SLIST_INIT(&meta[hd].idm.free);
 
-	for (last = 0; last < meta[hd].idm.last; last++)
-		if (uhash_get(hd, &ign, last))
+	for (last = 0; last < meta[hd].idm.last; last++) {
+		size_t size;
+		void *value = __hash_get(db, &size, &last, sizeof(unsigned));
+		if (!value)
 			idml_push(&meta[hd].idm.free, last);
+	}
 
 	return hd;
 }
