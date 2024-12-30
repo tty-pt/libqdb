@@ -430,7 +430,7 @@ main(int argc, char *argv[])
 			break;
 		case 'p':
 		case 'd':
-			fmode = 0644;
+			fmode = 0664;
 		case 'l':
 		case 'L':
 		case 'R':
