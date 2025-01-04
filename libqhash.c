@@ -18,6 +18,7 @@
 
 enum qhash_priv_flags {
 	QH_NOT_FIRST = 1,
+	QH_TXN = 8,
 };
 
 struct meta {
@@ -27,14 +28,14 @@ struct meta {
 	struct idm idm;
 };
 
-static DB *hash_dbs[HASH_DBS_MAX], *ids_db;
+static DB *hash_dbs[HASH_DBS_MAX];
 struct meta meta[HASH_DBS_MAX];
 
 static struct idm idm;
 
 static unsigned hash_n = 0;
 static int hash_first = 1;
-void *txnid = NULL;
+DB_TXN *txnid = NULL;
 DB_ENV *env;
 
 static void
@@ -61,9 +62,14 @@ void hash_set_logger(log_t logger) {
 	hashlog = logger;
 }
 
-static inline int
-_hash_put(DB *db, void *key_r, size_t key_len, void *value, size_t value_len)
+void hash_set_txn(void *arg) {
+	txnid = arg;
+}
+
+int
+hash_put(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len)
 {
+	DB *db = hash_dbs[hd];
 	DBT key, data;
 	int ret;
 
@@ -80,7 +86,7 @@ _hash_put(DB *db, void *key_r, size_t key_len, void *value, size_t value_len)
 		hashlog_err("hash_put get_flags");
 	dupes = flags & DB_DUP;
 
-	ret = db->put(db, txnid, &key, &data, 0);
+	ret = db->put(db, hd && (meta[hd].flags & QH_TXN) ? txnid : NULL, &key, &data, 0);
 	if (ret && (ret != DB_KEYEXIST || !dupes))
 		hashlog(LOG_WARNING, "hash_put");
 	return ret;
@@ -94,10 +100,12 @@ hash_cinit(const char *file, const char *database, int mode, int flags)
 
 	if (hash_first) {
 		idm = idm_init();
-		if (db_create(&ids_db, env, 0))
+		idm_new(&idm);
+
+		if (db_create(&hash_dbs[0], NULL, 0))
 			hashlog_err("hash_init: db_create ids_db");
 
-		if (ids_db->open(ids_db, txnid, NULL, NULL, DB_HASH, DB_CREATE, 644))
+		if (hash_dbs[0]->open(hash_dbs[0], NULL, NULL, NULL, DB_HASH, DB_CREATE, 644))
 			hashlog_err("hash_init: open ids_db");
 
 		memset(meta, 0, sizeof(meta));
@@ -105,14 +113,14 @@ hash_cinit(const char *file, const char *database, int mode, int flags)
 
 	hash_first = 0;
 	id = idm_new(&idm);
-	meta[id].flags = flags;
+	meta[id].flags = flags | (txnid ? QH_TXN : 0);
 
 	if (db_create(&hash_dbs[id], env, 0))
 		hashlog_err("hash_init: db_create");
 
 	// this is needed for associations
 	db = hash_dbs[id];
-	_hash_put(ids_db, &db, sizeof(DB *), &id, sizeof(unsigned));
+	hash_put(0, &db, sizeof(DB *), &id, sizeof(unsigned));
 
 	if (flags & QH_DUP)
 		if (db->set_flags(db, DB_DUP))
@@ -124,15 +132,9 @@ hash_cinit(const char *file, const char *database, int mode, int flags)
 	return id;
 }
 
-int
-hash_put(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len)
+void * __hash_get(unsigned hd, size_t *size, void *key_r, size_t key_len)
 {
 	DB *db = hash_dbs[hd];
-	return _hash_put(db, key_r, key_len, value, value_len);
-}
-
-static inline void * __hash_get(DB *db, size_t *size, void *key_r, size_t key_len)
-{
 	DBT key, data;
 	int ret;
 
@@ -142,7 +144,7 @@ static inline void * __hash_get(DB *db, size_t *size, void *key_r, size_t key_le
 	key.data = (void *) key_r;
 	key.size = key_len;
 
-	ret = db->get(db, txnid, &key, &data, 0);
+	ret = db->get(db, hd && (meta[hd].flags & QH_TXN) ? txnid : NULL, &key, &data, 0);
 
 	if (ret == DB_NOTFOUND)
 		return NULL;
@@ -153,10 +155,10 @@ static inline void * __hash_get(DB *db, size_t *size, void *key_r, size_t key_le
 	return data.data;
 }
 
-static inline int _hash_get(DB *db, void *value_r, void *key_r, size_t key_len)
+int hash_get(unsigned hd, void *value_r, void *key_r, size_t key_len)
 {
 	size_t size;
-	void *value = __hash_get(db, &size, key_r, key_len);
+	void *value = __hash_get(hd, &size, key_r, key_len);
 
 	if (!value)
 		return 1;
@@ -165,18 +167,11 @@ static inline int _hash_get(DB *db, void *value_r, void *key_r, size_t key_len)
 	return 0;
 }
 
-int hash_get(unsigned hd, void *value_r, void *key_r, size_t key_len)
-{
-	DB *db = hash_dbs[hd];
-	return _hash_get(db, value_r, key_r, key_len);
-}
-
 int hash_exists(unsigned hd, void *key_r, size_t key_len)
 {
-	DB *db = hash_dbs[hd];
 	size_t size;
 
-	if (__hash_get(db, &size, key_r, key_len))
+	if (__hash_get(hd, &size, key_r, key_len))
 		return 1;
 
 	return 0;
@@ -194,7 +189,7 @@ int hash_pget(unsigned hd, void *pkey_r, void *key_r, size_t key_len) {
 	key.data = (void *) key_r;
 	key.size = key_len;
 
-	ret = db->pget(db, txnid, &key, &pkey, &data, 0);
+	ret = db->pget(db, meta[hd].flags & QH_TXN ? txnid : NULL, &key, &pkey, &data, 0);
 
 	if (ret == DB_NOTFOUND)
 		return 1;
@@ -210,7 +205,7 @@ map_assoc(DB *sec, const DBT *key, const DBT *data, DBT *result)
 {
 	memset(result, 0, sizeof(DBT));
 	unsigned hd;
-	_hash_get(ids_db, &hd, &sec, sizeof(DB *)); // assumed == 0
+	hash_get(0, &hd, &sec, sizeof(DB *)); // assumed == 0
 	meta[hd].assoc(&result->data, &result->size, key->data, data->data);
 	return 0;
 }
@@ -223,7 +218,7 @@ hash_assoc(unsigned hd, unsigned link, assoc_t cb)
 	meta[hd].assoc = cb;
 	meta[hd].flags |= QH_SEC;
 
-	if (ldb->associate(ldb, NULL, db, map_assoc, DB_CREATE | DB_IMMUTABLE_KEY))
+	if (ldb->associate(ldb, meta[hd].flags & QH_TXN ? txnid : NULL, db, map_assoc, DB_CREATE | DB_IMMUTABLE_KEY))
 		hashlog_err("hash_assoc");
 }
 
@@ -235,7 +230,7 @@ hash_vdel(unsigned hd, void *key_data, size_t key_size, void *value_data, size_t
 	DBC *cursor;
 	int ret, flags = DB_SET;
 
-	if ((ret = db->cursor(db, txnid, &cursor, 0)) != 0) {
+	if ((ret = db->cursor(db, meta[hd].flags & QH_TXN ? txnid : NULL, &cursor, 0)) != 0) {
 		hashlog(LOG_ERR, "cursor: %s", db_strerror(ret));
 		return ret;
 	}
@@ -275,13 +270,13 @@ struct hash_internal {
 
 struct hash_cursor
 hash_iter(unsigned hd, void *key, size_t key_len) {
+	DB *db = hash_dbs[hd];
 	struct hash_cursor cur;
 	struct hash_internal *internal = malloc(sizeof(struct hash_internal));
 	cur.internal = internal;
 	internal->hd = hd;
-	DB *db = hash_dbs[hd];
 	internal->cursor = NULL;
-	db->cursor(db, NULL, &internal->cursor, 0);
+	db->cursor(db, meta[hd].flags & QH_TXN ? txnid : NULL, &internal->cursor, 0);
 	memset(&internal->pkey, 0, sizeof(DBT));
 	memset(&internal->key, 0, sizeof(DBT));
 	memset(&internal->data, 0, sizeof(DBT));
@@ -348,7 +343,7 @@ int hash_drop(unsigned hd) {
 	DBC *cursor;
 	int ret, flags = DB_FIRST;
 
-	if ((ret = db->cursor(db, txnid, &cursor, 0)) != 0) {
+	if ((ret = db->cursor(db, meta[hd].flags & QH_TXN ? txnid : NULL, &cursor, 0)) != 0) {
 		hashlog(LOG_ERR, "hash_drop: cursor: %s\n", db_strerror(ret));
 		return ret;
 	}
@@ -414,7 +409,6 @@ unsigned idm_new(struct idm *idm) {
 
 unsigned lhash_cinit(size_t item_len, const char *file, const char *database, int mode) {
 	unsigned hd = hash_cinit(file, database, mode, 0), last;
-	DB *db = hash_dbs[hd];
 	unsigned ign;
 	meta[hd].idm.last = 0;
 	uhash_get(hd, &meta[hd].idm.last, (unsigned) -1);
@@ -424,7 +418,7 @@ unsigned lhash_cinit(size_t item_len, const char *file, const char *database, in
 
 	for (last = 0; last < meta[hd].idm.last; last++) {
 		size_t size;
-		void *value = __hash_get(db, &size, &last, sizeof(unsigned));
+		void *value = __hash_get(hd, &size, &last, sizeof(unsigned));
 		if (!value)
 			idml_push(&meta[hd].idm.free, last);
 	}

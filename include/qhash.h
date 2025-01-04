@@ -26,6 +26,7 @@ struct idm {
 typedef void (*log_t)(int type, const char *fmt, ...);
 
 void hash_set_logger(log_t logger);
+void hash_set_txn(void *arg);
 
 /* initialize id management list */
 static inline struct idm_list idml_init() {
