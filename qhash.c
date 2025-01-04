@@ -4,6 +4,8 @@
 #include <time.h>
 #include <unistd.h>
 
+DB_TXN *txnid;
+
 typedef struct hash_cursor gen_iter_t(unsigned hd, void *key);
 typedef void gen_del_t(unsigned hd, void *key);
 typedef int gen_vdel_t(unsigned hd, void *key, void *value);
@@ -371,12 +373,12 @@ unsigned gen_open(char *fname, unsigned mode) {
 	static int fmode = 0664;
 	unsigned existed = access(fname, F_OK) == 0;
 
-	aux_hdp.phd = lhash_cinit(0, fname, "phd", fmode);
+	aux_hdp.phd = lhash_cinit(0, fname, "phd", fmode, 0);
 	if (existed)
 		lhash_get(aux_hdp.phd, &mode, -2);
 	if (mode) {
-		aux_hdp.hd[0] = ahash_cinit(fname, "hd", fmode); // needed for dupes
-		aux_hdp.hd[1] = ahash_cinit(fname, "rhd", fmode);
+		aux_hdp.hd[0] = ahash_cinit(fname, "hd", fmode, 0); // needed for dupes
+		aux_hdp.hd[1] = ahash_cinit(fname, "rhd", fmode, 0);
 		hash_assoc(aux_hdp.hd[0], aux_hdp.phd, assoc_hd);
 		hash_assoc(aux_hdp.hd[1], aux_hdp.phd, m1_assoc_rhd);
 	} else {
@@ -456,7 +458,6 @@ main(int argc, char *argv[])
 	case 'r': reverse = !reverse; break;
 	}
 
-	lhash_flush(prim.phd);
 	hash_close(prim.phd, 0);
 	hash_close(prim.hd[0], 0);
 	hash_close(prim.hd[1], 0);

@@ -11,7 +11,7 @@ libqhash.so: libqhash.c include/qhash.h
 bin: qhash
 
 qhash: qhash.c include/qhash.h
-	cc -o $@ qhash.c -g -O3 ${LDFLAGS}
+	cc -o $@ qhash.c -I/usr/local/include -g -O3 ${LDFLAGS}
 
 install: libqhash.so
 	install -d ${DESTDIR}${PREFIX}/lib/pkgconfig
