@@ -6,8 +6,14 @@
 #include <sys/queue.h>
 #include <string.h>
 #include <stdint.h>
+#ifdef __OpenBSD__
+#include <db4/db.h>
+#else
+#include <db.h>
+#endif
 
 #define fhash_iter(hd, thing) hash_iter(hd, &thing, sizeof(thing))
+extern DB_TXN *txnid;
 
 /* ID MANAGEMENT UNIT */
 
@@ -69,6 +75,7 @@ unsigned idm_new(struct idm *idm);
 enum qhash_flags {
 	QH_DUP = 2,
 	QH_SEC = 4, // secondary
+	QH_TXN = 8, // transaction support
 };
 
 struct hash_cursor {
@@ -130,7 +137,7 @@ void hash_sync(unsigned hd);
 
 /* initialize an memory-only database */
 static inline unsigned hash_init() {
-	return hash_cinit(NULL, NULL, 0644, 0);
+	return hash_cinit(NULL, NULL, 0644, txnid ? QH_TXN : 0);
 }
 
 /*
@@ -176,11 +183,11 @@ uhash_vdel(unsigned hd, unsigned key, void *value_data, size_t value_size) {
  */
 
 /* initialize a lhash (generic) */
-unsigned lhash_cinit(size_t item_len, const char *file, const char *database, int mode);
+unsigned lhash_cinit(size_t item_len, const char *file, const char *database, int mode, unsigned flags);
 
 /* initialize a memory-only lhash */
 static inline unsigned lhash_init(size_t item_len) {
-	return lhash_cinit(item_len, NULL, NULL, 0644);
+	return lhash_cinit(item_len, NULL, NULL, 0644, txnid ? QH_TXN : 0);
 }
 
 /* add an item to a lhash */
@@ -230,13 +237,13 @@ void lhash_flush(unsigned hd);
  */
 
 /* initialize ahash */
-static inline unsigned ahash_cinit(char *fname, char *dbname, int mode) {
-	return hash_cinit(fname, dbname, mode, QH_DUP);
+static inline unsigned ahash_cinit(char *fname, char *dbname, int mode, unsigned flags) {
+	return hash_cinit(fname, dbname, mode, QH_DUP | flags);
 }
 
 /* initialize ahash */
 static inline unsigned ahash_init() {
-	return ahash_cinit(NULL, NULL, 0644);
+	return ahash_cinit(NULL, NULL, 0644, txnid ? QH_TXN : 0);
 }
 
 /* add an association */
