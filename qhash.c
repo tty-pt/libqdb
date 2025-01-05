@@ -44,7 +44,7 @@ char value_buf[BUFSIZ], key_buf[BUFSIZ], *col;
 
 unsigned qhds, ahds, qhds_n = 0, ahds_n = 0;
 
-unsigned mode = 0, reverse = 0, tmprev_q, tmprev_a;
+unsigned mode = 0, reverse = 0, tmprev_q, tmprev_a, bail = 0;
 
 void u_print(void *value) {
 	printf("%u", * (unsigned *) value);
@@ -137,6 +137,7 @@ usage(char *prog)
 	fprintf(stderr, "        -d KEY[:VAL] delete key/value pair(s)\n");
 	fprintf(stderr, "        -g KEY       get value(s) of a key\n");
 	fprintf(stderr, "        -m 0-1       select mode of operation\n");
+	fprintf(stderr, "        -x           when printing associations, bail on first result\n");
 	fprintf(stderr, "    Modes (default is 0):\n");
 	fprintf(stderr, "         0           index mode (1 string : 1 id)\n");
 	fprintf(stderr, "         1           associative mode (n id : n id)\n");
@@ -214,18 +215,19 @@ static inline void gen_del() {
 		gen.del(prim.hd[!tmprev_q], value_buf);
 }
 
-static inline int assoc_exists() {
+static inline int _assoc_exists(char *key_buf, unsigned tmprev) {
 	static char alt_buf[BUFSIZ];
-	unsigned aux;
+	struct hdpair pair;
 	struct hash_cursor c2 = lhash_iter(ahds);
+	unsigned aux;
+	memcpy(alt_buf, key_buf, sizeof(alt_buf));
 
-	while (lhash_next(&aux, &aux_hdp, &c2))
-		if (u_get(aux_hdp.hd[0], alt_buf, key_buf)) {
-			hash_fin(&c2);
-			return 0;
-		}
+	while (lhash_next(&aux, &pair, &c2)) { hash_fin(&c2); break; }
+	return !m0_gen[tmprev].get(pair.hd[!tmprev], alt_buf, alt_buf);
+}
 
-	return 1;
+static inline int assoc_exists(char *key_buf) {
+	return _assoc_exists(key_buf, 1);
 }
 
 static inline void assoc_print() {
@@ -240,6 +242,10 @@ static inline void assoc_print() {
 			continue;
 		}
 		s_print(alt_buf);
+		if (bail) {
+			hash_fin(&c2);
+			break;
+		}
 	}
 }
 
@@ -251,7 +257,7 @@ static inline void gen_rand() {
 	c = gen.iter(prim.hd[!tmprev_q], iter_key);
 
 	while (lhash_next((unsigned *) key_buf, value_buf, &c))
-		if (assoc_exists())
+		if (assoc_exists(key_buf))
 			count ++;
 
 	if (count == 0) {
@@ -264,7 +270,7 @@ static inline void gen_rand() {
 	c = gen.iter(prim.hd[!tmprev_q], iter_key);
 
 	while (lhash_next((unsigned *) key_buf, value_buf, &c))
-		if (!assoc_exists())
+		if (!assoc_exists(key_buf))
 			continue;
 		else if ((--count) <= rand) {
 			hash_fin(&c);
@@ -303,7 +309,7 @@ static void gen_get(char *str) {
 	c = gen.iter(prim.hd[!tmprev_q], iter_key);
 
 	while (lhash_next((unsigned *) key_buf, value_buf, &c))
-		if (assoc_exists())
+		if (assoc_exists(key_buf))
 			_gen_get();
 }
 
@@ -395,7 +401,7 @@ unsigned gen_open(char *fname, unsigned mode) {
 int
 main(int argc, char *argv[])
 {
-	static char *optstr = "la:q:p:d:g:m:rR:L:?";
+	static char *optstr = "xla:q:p:d:g:m:rR:L:?";
 	char *fname = argv[argc - 1], ch;
 	int fmode = 0444;
 
@@ -429,6 +435,9 @@ main(int argc, char *argv[])
 			gen_open(optarg, 0);
 			lhash_new(qhds, &aux_hdp);
 			qhds_n++;
+			break;
+		case 'x':
+			bail = 1;
 			break;
 		case 'p':
 		case 'd':
