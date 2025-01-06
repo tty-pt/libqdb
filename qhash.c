@@ -18,6 +18,10 @@ int u_gen_get(unsigned hd, void *value, void *key) {
 	return uhash_get(hd, value, * (unsigned *) key);
 }
 
+int s_gen_get(unsigned hd, void *value, void *key) {
+	return shash_get(hd, value, key);
+}
+
 int s_gen_pget(unsigned hd, void *value, void *key) {
 	return shash_pget(hd, value, key);
 }
@@ -150,14 +154,22 @@ int u_get(unsigned hd, void *value, void *key) {
 static inline void *rec_query(unsigned qhds, char *tbuf, char *buf, unsigned tmprev) {
 	struct hash_cursor c2 = lhash_iter(qhds);
 	unsigned aux;
+	char *aux2;
 
 	while (lhash_next(&aux, &aux_hdp, &c2)) {
 		tmprev = !tmprev;
+		// FIXME this is not correct. try:
+		// qhash -q types.db -a index.db -a ../../choir/items/nossa_senhora_do_monte/songs.db -rgEntrada assoc.db  | grep cris
+		/* fprintf(stderr, "req_query %u %u %u %u %s\n", qhds, tmprev, aux_hdp.hd[tmprev], * (unsigned *) buf, buf); */
 		if (m0_gen[!tmprev].get(aux_hdp.hd[tmprev], tbuf, buf)) {
+			/* fprintf(stderr, "req_query? %u %s\n", * (unsigned *) tbuf, tbuf); */
 			hash_fin(&c2);
 			return NULL;
 		}
+		/* fprintf(stderr, "req_query! %u %s\n", * (unsigned *) tbuf, tbuf); */
+		aux2 = buf;
 		buf = tbuf;
+		tbuf = aux2;
 	}
 
 	return buf;
@@ -215,19 +227,19 @@ static inline void gen_del() {
 		gen.del(prim.hd[!tmprev_q], value_buf);
 }
 
-static inline int _assoc_exists(char *key_buf, unsigned tmprev) {
+static inline int assoc_exists(char *key_buf) {
+	if (!ahds_n)
+		return 1;
+
 	static char alt_buf[BUFSIZ];
 	struct hdpair pair;
 	struct hash_cursor c2 = lhash_iter(ahds);
-	unsigned aux;
+	unsigned aux, tmprev = 1;
 	memcpy(alt_buf, key_buf, sizeof(alt_buf));
 
+	// FIXME return !!rec_query(ahds, alt_buf, alt_buf, 1);
 	while (lhash_next(&aux, &pair, &c2)) { hash_fin(&c2); break; }
 	return !m0_gen[tmprev].get(pair.hd[!tmprev], alt_buf, alt_buf);
-}
-
-static inline int assoc_exists(char *key_buf) {
-	return _assoc_exists(key_buf, 1);
 }
 
 static inline void assoc_print() {
