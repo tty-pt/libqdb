@@ -396,13 +396,18 @@ unsigned idm_new(struct idm *idm) {
 }
 
 unsigned lhash_cinit(size_t item_len, const char *file, const char *database, int mode, unsigned flags) {
-	unsigned hd = hash_cinit(file, database, mode, flags), last;
+	unsigned hd = hash_cinit(file, database, mode, flags), last = 0;
 	unsigned ign;
-	meta[hd].idm.last = 0;
-	uhash_get(hd, &meta[hd].idm.last, (unsigned) -1);
+	char buf[item_len];
 	meta[hd].len = item_len;
 	SLIST_INIT(&meta[hd].idm.free);
+	struct hash_cursor c = lhash_iter(hd);
 
+	while (lhash_next(&ign, buf, &c))
+		if (ign >= last)
+			last = ign + 1;
+
+	meta[hd].idm.last = last;
 	for (last = 0; last < meta[hd].idm.last; last++) {
 		size_t size;
 		void *value = __hash_get(hd, &size, &last, sizeof(unsigned));
@@ -424,11 +429,7 @@ static unsigned lh_len(unsigned hd, char *item) {
 
 unsigned lhash_new(unsigned hd, void *item) {
 	unsigned id = idm_new(&meta[hd].idm);
-	unsigned plast;
 	uhash_put(hd, id, item, lh_len(hd, item));
-	if (!uhash_get(hd, &plast, (unsigned) -1))
-		uhash_del(hd, -1);
-	uhash_put(hd, (unsigned) -1, &meta[hd].idm.last, sizeof(unsigned));
 	return id;
 }
 

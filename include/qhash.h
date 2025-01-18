@@ -215,7 +215,6 @@ static inline int lhash_next(unsigned *key, void *value, struct hash_cursor *cur
 
 	while ((ret = hash_next(key, value, cur))) {
 		switch (*key) {
-			case (unsigned) -1:
 			case (unsigned) -2:
 				continue;
 			default: break;
