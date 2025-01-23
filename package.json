@@ -1,11 +1,11 @@
 {
   "name": "@tty-pt/qhash",
-  "version": "0.5.31",
+  "version": "0.5.33",
   "description": "C lib for easy hashtable usage",
   "main": "index.js",
   "scripts": {
     "test": "echo @tty-pt/qhash: No tests",
-    "postinstall": "make"
+    "postinstall": "make libqhash.so qhash"
   },
   "keywords": [
     "hashtable"
