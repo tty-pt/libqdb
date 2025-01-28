@@ -51,6 +51,17 @@ static inline struct idm idm_init() {
 /* push an element into an idml */
 void idml_push(struct idm_list *list, unsigned id);
 
+/* get first element of idml */
+static inline struct idm_item *idml_iter(struct idm_list *list) {
+	return SLIST_FIRST(list);
+}
+
+/* get next element of idml */
+static inline struct idm_item *idml_next(unsigned *id, struct idm_item *last) {
+	*id = last->value;
+	return SLIST_NEXT(last, entry);
+}
+
 /* delete an id from an idm */
 static inline void idm_del(struct idm *idm, unsigned id) {
 	if (id + 1 == idm->last)

@@ -115,7 +115,7 @@ hash_cinit(const char *file, const char *database, int mode, int flags)
 		if (db->set_flags(db, DB_DUP))
 			hashlog_err("hash_init: set_flags");
 
-	if (db->open(db, (flags & QH_TXN) ? txnid : NULL, file, database, DB_HASH, DB_CREATE, mode))
+	if (db->open(db, (flags & QH_TXN) ? txnid : NULL, file, database, DB_HASH, DB_CREATE | DB_THREAD, mode))
 		hashlog_err("hash_init: open");
 
 	return id;
