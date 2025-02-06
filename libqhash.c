@@ -26,7 +26,6 @@ struct meta meta[HASH_DBS_MAX];
 
 static struct idm idm;
 
-static unsigned hash_n = 0;
 static int hash_first = 1;
 DB_ENV *env;
 
@@ -35,7 +34,7 @@ hash_logger_stderr(int type, const char *fmt, ...)
 {
 	va_list va;
 	va_start(va, fmt);
-	int ret = vfprintf(stderr, fmt, va);
+	vfprintf(stderr, fmt, va);
 	va_end(va);
 }
 
@@ -69,7 +68,8 @@ hash_put(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len
 	data.data = value;
 	data.size = value_len;
 	data.flags = DB_DBT_MALLOC;
-	int flags, dupes;
+	int dupes;
+	u_int32_t flags;
 
 	if (db->get_flags(db, &flags))
 		hashlog_err("hash_put get_flags");
@@ -435,7 +435,7 @@ unsigned lhash_new(unsigned hd, void *item) {
 
 void lhash_del(unsigned hd, unsigned ref) {
 	idm_del(&meta[hd].idm, ref);
-	return uhash_del(hd, ref);
+	uhash_del(hd, ref);
 }
 
 int lhash_put(unsigned hd, unsigned id, void *source) {
@@ -451,7 +451,7 @@ void hash_env_set(void *value) {
 	env = (DB_ENV *) value;
 }
 
-void *hash_env_pop() {
+void *hash_env_pop(void) {
 	DB_ENV *ret = env;
 	env = NULL;
 	return ret;

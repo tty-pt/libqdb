@@ -6,7 +6,7 @@ libdir := /usr/local/lib ${pwd}
 LDFLAGS	+= -lqhash -ldb ${libdir:%=-L%} ${libdir:%=-Wl,-rpath,%}
 
 libqhash.so: libqhash.c include/qhash.h
-	${CC} -o $@ libqhash.c -I/usr/local/include -g -fPIC -shared
+	${CC} -o $@ libqhash.c -I/usr/local/include -g -O3 -fPIC -shared -Wall -Wextra -Wpedantic
 
 bin: qhash
 

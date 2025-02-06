@@ -1,4 +1,4 @@
-#include "include/qhash.h"
+#include "./include/qhash.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>

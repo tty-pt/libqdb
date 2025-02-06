@@ -34,14 +34,14 @@ typedef void (*log_t)(int type, const char *fmt, ...);
 void hash_set_logger(log_t logger);
 
 /* initialize id management list */
-static inline struct idm_list idml_init() {
+static inline struct idm_list idml_init(void) {
 	struct idm_list idml;
 	SLIST_INIT(&idml);
 	return idml;
 }
 
 /* initialize an id management unit */
-static inline struct idm idm_init() {
+static inline struct idm idm_init(void) {
 	struct idm idm;
 	SLIST_INIT(&idm.free);
 	idm.last = 0;
@@ -85,7 +85,7 @@ unsigned idm_new(struct idm *idm);
 
 enum qhash_flags {
 	QH_DUP = 2,
-	QH_SEC = 4, // secondary
+	QH_SEC = 4, // secondary (internal)
 	QH_TXN = 8, // transaction support
 };
 
@@ -147,7 +147,7 @@ void hash_fin(struct hash_cursor *cur);
 void hash_sync(unsigned hd);
 
 /* initialize an memory-only database */
-static inline unsigned hash_init() {
+static inline unsigned hash_init(void) {
 	return hash_cinit(NULL, NULL, 0644, txnid ? QH_TXN : 0);
 }
 
@@ -177,7 +177,7 @@ static inline int uhash_put(unsigned hd, unsigned ref, void *value, unsigned val
 
 /* delete a value from an uhash */
 static inline void uhash_del(unsigned hd, unsigned key) {
-	return hash_del(hd, &key, sizeof(key));
+	hash_del(hd, &key, sizeof(key));
 }
 
 /* delete a certain value from a uhash that supports dupes */
@@ -250,7 +250,7 @@ static inline unsigned ahash_cinit(char *fname, char *dbname, int mode, unsigned
 }
 
 /* initialize ahash */
-static inline unsigned ahash_init() {
+static inline unsigned ahash_init(void) {
 	return ahash_cinit(NULL, NULL, 0644, txnid ? QH_TXN : 0);
 }
 
@@ -299,7 +299,7 @@ static inline int shash_exists(unsigned hd, char *key) {
 
 /* delete a value from an shash */
 static inline void shash_del(unsigned hd, char *key) {
-	return hash_del(hd, key, strlen(key) + 1);
+	hash_del(hd, key, strlen(key) + 1);
 }
 
 /* start iterating on a hash table (maybe within a certain key) */
@@ -369,6 +369,6 @@ suhash_table(int hd, char *table[]) {
 }
 
 void hash_env_set(void *value);
-void *hash_env_pop();
+void *hash_env_pop(void);
 
 #endif
