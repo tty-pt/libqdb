@@ -383,17 +383,21 @@ unsigned gen_open(char *fname, unsigned mode) {
 	static int fmode = 0664;
 	unsigned existed = access(fname, F_OK) == 0;
 
-	aux_hdp.phd = lhash_cinit(0, fname, "phd", fmode, 0);
+	hash_config.file = fname;
+	hash_config.mode = 0664;
+	hash_config.flags = 0;
+
+	aux_hdp.phd = lhash_init(0, "phd");
 	if (existed)
 		lhash_get(aux_hdp.phd, &mode, -2);
 	if (mode) {
-		aux_hdp.hd[0] = ahash_cinit(fname, "hd", fmode, 0); // needed for dupes
-		aux_hdp.hd[1] = ahash_cinit(fname, "rhd", fmode, 0);
+		aux_hdp.hd[0] = ahash_init("hd"); // needed for dupes
+		aux_hdp.hd[1] = ahash_init("rhd");
 		hash_assoc(aux_hdp.hd[0], aux_hdp.phd, assoc_hd);
 		hash_assoc(aux_hdp.hd[1], aux_hdp.phd, m1_assoc_rhd);
 	} else {
-		aux_hdp.hd[0] = hash_cinit(fname, "hd", fmode, 0); // not really needed but here for consistency
-		aux_hdp.hd[1] = hash_cinit(fname, "rhd", fmode, QH_DUP);
+		aux_hdp.hd[0] = hash_init("hd"); // not really needed but here for consistency
+		aux_hdp.hd[1] = ahash_init("rhd");
 		hash_assoc(aux_hdp.hd[0], aux_hdp.phd, assoc_hd);
 		hash_assoc(aux_hdp.hd[1], aux_hdp.phd, m0_assoc_rhd);
 	}
@@ -414,8 +418,8 @@ main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
-	ahds = lhash_init(sizeof(struct hdpair));
-	qhds = lhash_init(sizeof(struct hdpair));
+	ahds = lhash_init(sizeof(struct hdpair), NULL);
+	qhds = lhash_init(sizeof(struct hdpair), NULL);
 
 	gen_r = m0_gen;
 

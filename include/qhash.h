@@ -2,10 +2,11 @@
 #define QHASH_H
 
 #include <stddef.h>
-#include <sys/types.h>
-#include <sys/queue.h>
-#include <string.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/queue.h>
+#include <sys/types.h>
 #ifdef __OpenBSD__
 #include <db4/db.h>
 #else
@@ -15,51 +16,66 @@
 #define fhash_iter(hd, thing) hash_iter(hd, &thing, sizeof(thing))
 extern DB_TXN *txnid;
 
+#define FILO(name, TYPE) \
+	struct name ## _item { \
+		TYPE value; \
+		SLIST_ENTRY(name ## _item) entry; \
+	}; \
+	SLIST_HEAD(name, name ## _item); \
+	static inline struct name name ## _init(void) { \
+		struct name list;\
+		SLIST_INIT(&list);\
+		return list;\
+	}\
+	static inline void name ## _push(struct name *list, TYPE id) { \
+		struct name ## _item *item = (struct name ## _item *) \
+			malloc(sizeof(struct name ## _item)); \
+		item->value = id; \
+		SLIST_INSERT_HEAD(list, item, entry); \
+	} \
+	static inline TYPE name ## _pop(struct name *list) { \
+		struct name ## _item *popped = SLIST_FIRST(list); \
+		if (!popped) return -1; \
+		TYPE ret = popped->value; \
+		SLIST_REMOVE_HEAD(list, entry); \
+		free(popped); \
+		return ret; \
+	} \
+	static inline struct name ## _item *name ## _iter(struct name *list) { \
+		return SLIST_FIRST(list); \
+	} \
+	static inline struct name ## _item *name ## _next(TYPE *id, struct name ## _item *last) { \
+		*id = last->value; \
+		return SLIST_NEXT(last, entry); \
+	} \
+	static inline void name ## _drop(struct name *list) { \
+		while (!name ## _pop(list)); \
+	}
+
 /* ID MANAGEMENT UNIT */
 
-struct idm_item {
-	unsigned value;
-	SLIST_ENTRY(idm_item) entry;
-};
-
-SLIST_HEAD(idm_list, idm_item);
+FILO(idml, unsigned)
 
 struct idm {
-	struct idm_list free;
+	struct idml free;
 	unsigned last;
 };
+
+static struct hash_config {
+	int mode, flags;
+	char *file;
+} hash_config = { .mode = 0644, .flags = 0, .file = NULL };
 
 typedef void (*log_t)(int type, const char *fmt, ...);
 
 void hash_set_logger(log_t logger);
 
-/* initialize id management list */
-static inline struct idm_list idml_init(void) {
-	struct idm_list idml;
-	SLIST_INIT(&idml);
-	return idml;
-}
-
 /* initialize an id management unit */
 static inline struct idm idm_init(void) {
 	struct idm idm;
-	SLIST_INIT(&idm.free);
+	idm.free = idml_init();
 	idm.last = 0;
 	return idm;
-}
-
-/* push an element into an idml */
-void idml_push(struct idm_list *list, unsigned id);
-
-/* get first element of idml */
-static inline struct idm_item *idml_iter(struct idm_list *list) {
-	return SLIST_FIRST(list);
-}
-
-/* get next element of idml */
-static inline struct idm_item *idml_next(unsigned *id, struct idm_item *last) {
-	*id = last->value;
-	return SLIST_NEXT(last, entry);
 }
 
 /* delete an id from an idm */
@@ -68,14 +84,6 @@ static inline void idm_del(struct idm *idm, unsigned id) {
 		idm->last--;
 	else
 		idml_push(&idm->free, id);
-}
-
-/* pop unsigned from idml */
-unsigned idml_pop(struct idm_list *list);
-
-/* drop an idml */
-static inline void idml_drop(struct idm_list *list) {
-	while (!idml_pop(list));
 }
 
 /* get a new id from an idm */
@@ -147,8 +155,8 @@ void hash_fin(struct hash_cursor *cur);
 void hash_sync(unsigned hd);
 
 /* initialize an memory-only database */
-static inline unsigned hash_init(void) {
-	return hash_cinit(NULL, NULL, 0644, txnid ? QH_TXN : 0);
+static inline unsigned hash_init(char *database) {
+	return hash_cinit(hash_config.file, database, hash_config.mode, hash_config.flags);
 }
 
 /*
@@ -197,8 +205,8 @@ uhash_vdel(unsigned hd, unsigned key, void *value_data, size_t value_size) {
 unsigned lhash_cinit(size_t item_len, const char *file, const char *database, int mode, unsigned flags);
 
 /* initialize a memory-only lhash */
-static inline unsigned lhash_init(size_t item_len) {
-	return lhash_cinit(item_len, NULL, NULL, 0644, txnid ? QH_TXN : 0);
+static inline unsigned lhash_init(size_t item_len, char *database) {
+	return lhash_cinit(item_len, hash_config.file, database, hash_config.mode, hash_config.flags);
 }
 
 /* add an item to a lhash */
@@ -250,8 +258,8 @@ static inline unsigned ahash_cinit(char *fname, char *dbname, int mode, unsigned
 }
 
 /* initialize ahash */
-static inline unsigned ahash_init(void) {
-	return ahash_cinit(NULL, NULL, 0644, txnid ? QH_TXN : 0);
+static inline unsigned ahash_init(char *database) {
+	return ahash_cinit(hash_config.file, database, hash_config.mode, hash_config.flags);
 }
 
 /* add an association */

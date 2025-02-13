@@ -30,7 +30,7 @@ static int hash_first = 1;
 DB_ENV *env;
 
 static void
-hash_logger_stderr(int type, const char *fmt, ...)
+hash_logger_stderr(int type __attribute__((unused)), const char *fmt, ...)
 {
 	va_list va;
 	va_start(va, fmt);
@@ -92,10 +92,10 @@ hash_cinit(const char *file, const char *database, int mode, int flags)
 		idm_new(&idm);
 
 		if (db_create(&hash_dbs[0], NULL, 0))
-			hashlog_err("hash_init: db_create ids_db");
+			hashlog_err("hash_cinit: db_create ids_db");
 
 		if (hash_dbs[0]->open(hash_dbs[0], NULL, NULL, NULL, DB_HASH, DB_CREATE, 644))
-			hashlog_err("hash_init: open ids_db");
+			hashlog_err("hash_cinit: open ids_db");
 
 		memset(meta, 0, sizeof(meta));
 	}
@@ -105,7 +105,7 @@ hash_cinit(const char *file, const char *database, int mode, int flags)
 	meta[id].flags = flags;
 
 	if (db_create(&hash_dbs[id], env, 0))
-		hashlog_err("hash_init: db_create");
+		hashlog_err("hash_cinit: db_create");
 
 	// this is needed for associations
 	db = hash_dbs[id];
@@ -113,10 +113,10 @@ hash_cinit(const char *file, const char *database, int mode, int flags)
 
 	if (flags & QH_DUP)
 		if (db->set_flags(db, DB_DUP))
-			hashlog_err("hash_init: set_flags");
+			hashlog_err("hash_cinit: set_flags");
 
 	if (db->open(db, (flags & QH_TXN) ? txnid : NULL, file, database, DB_HASH, DB_CREATE | DB_THREAD, mode))
-		hashlog_err("hash_init: open");
+		hashlog_err("hash_cinit: open");
 
 	return id;
 }
@@ -250,7 +250,7 @@ hash_vdel(unsigned hd, void *key_data, size_t key_size, void *value_data, size_t
 
 typedef int get_t(DBC *dbc, DBT *key, DBT *pkey, DBT *data, unsigned flags);
 
-int primary_get(DBC *dbc, DBT *key, DBT *pkey, DBT *data, unsigned flags) {
+int primary_get(DBC *dbc, DBT *key __attribute__((unused)), DBT *pkey, DBT *data, unsigned flags) {
 	return dbc->get(dbc, pkey, data, flags);
 }
 
@@ -309,7 +309,7 @@ hash_next(void *key, void *value, struct hash_cursor *cur)
 
 	if ((ret = internal->get(internal->cursor, &internal->key, &internal->pkey, &internal->data, flags))) {
 		if (ret != DB_NOTFOUND)
-			hashlog(LOG_ERR, "hash_cnext: %u %d %s", internal->hd, cur->flags, db_strerror(ret));
+			hashlog(LOG_ERR, "hash_next: %u %d %s", internal->hd, cur->flags, db_strerror(ret));
 		internal->cursor->close(internal->cursor);
 		free(internal);
 		cur->internal = NULL;
@@ -366,24 +366,6 @@ void
 hash_sync(unsigned hd) {
 	DB *db = hash_dbs[hd];
 	db->sync(db, 0);
-}
-
-void idml_push(struct idm_list *list, unsigned id) {
-	struct idm_item *item = malloc(sizeof(struct idm_item));
-	item->value = id;
-	SLIST_INSERT_HEAD(list, item, entry);
-}
-
-unsigned idml_pop(struct idm_list *list) {
-	struct idm_item *popped = SLIST_FIRST(list);
-
-	if (!popped)
-		return -1;
-
-	unsigned ret = popped->value;
-	SLIST_REMOVE_HEAD(list, entry);
-	free(popped);
-	return ret;
 }
 
 unsigned idm_new(struct idm *idm) {
