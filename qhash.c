@@ -31,7 +31,8 @@ int u_gen_pget(unsigned hd, void *value, void *key) {
 }
 
 struct hdpair {
-	unsigned phd, hd[2];
+	unsigned phd, hd[2], flags;
+	char fname[BUFSIZ];
 } aux_hdp, prim;
 
 typedef struct {
@@ -387,9 +388,13 @@ unsigned gen_open(char *fname, unsigned mode) {
 	hash_config.mode = 0664;
 	hash_config.flags = 0;
 
+	aux_hdp.flags = 0;
 	aux_hdp.phd = lhash_init(0, "phd");
-	if (existed)
+	strlcpy(aux_hdp.fname, fname, BUFSIZ);
+	if (existed) {
 		lhash_get(aux_hdp.phd, &mode, -2);
+		aux_hdp.flags = 1;
+	}
 	if (mode) {
 		aux_hdp.hd[0] = ahash_init("hd"); // needed for dupes
 		aux_hdp.hd[1] = ahash_init("rhd");
@@ -406,12 +411,20 @@ unsigned gen_open(char *fname, unsigned mode) {
 	return mode;
 }
 
+static inline void hdpair_close(struct hdpair *pair, unsigned nochange) {
+	hash_close(pair->phd, 0);
+	hash_close(pair->hd[0], 0);
+	hash_close(pair->hd[1], 0);
+	if (!(pair->flags & 1) && nochange)
+		unlink(pair->fname);
+}
+
 int
 main(int argc, char *argv[])
 {
 	static char *optstr = "xla:q:p:d:g:m:rR:L:?";
 	char *fname = argv[argc - 1], ch;
-	int fmode = 0444;
+	unsigned nochange = 1;
 
 	if (argc < 2) {
 		usage(*argv);
@@ -449,7 +462,7 @@ main(int argc, char *argv[])
 			break;
 		case 'p':
 		case 'd':
-			fmode = 0664;
+			nochange = 0;
 		case 'l':
 		case 'L':
 		case 'R':
@@ -475,7 +488,16 @@ main(int argc, char *argv[])
 	case 'r': reverse = !reverse; break;
 	}
 
-	hash_close(prim.phd, 0);
-	hash_close(prim.hd[0], 0);
-	hash_close(prim.hd[1], 0);
+	hdpair_close(&prim, nochange);
+
+	unsigned key;
+	struct hash_cursor c = lhash_iter(ahds);
+
+	while (lhash_next(&key, &aux_hdp, &c))
+		hdpair_close(&aux_hdp, 1);
+
+	c = lhash_iter(qhds);
+
+	while (lhash_next(&key, &aux_hdp, &c))
+		hdpair_close(&aux_hdp, 1);
 }
