@@ -95,6 +95,7 @@ enum qhash_flags {
 	QH_DUP = 2,
 	QH_SEC = 4, // secondary (internal)
 	QH_TXN = 8, // transaction support
+	QH_RDONLY = 16, // read only mode
 };
 
 struct hash_cursor {

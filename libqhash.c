@@ -85,7 +85,7 @@ unsigned
 hash_cinit(const char *file, const char *database, int mode, int flags)
 {
 	DB *db;
-	unsigned id;
+	unsigned id, dbflags = 0;
 
 	if (hash_first) {
 		idm = idm_init();
@@ -115,7 +115,12 @@ hash_cinit(const char *file, const char *database, int mode, int flags)
 		if (db->set_flags(db, DB_DUP))
 			hashlog_err("hash_cinit: set_flags");
 
-	if (db->open(db, (flags & QH_TXN) ? txnid : NULL, file, database, DB_HASH, DB_CREATE | DB_THREAD, mode))
+	dbflags = 0;
+	if (flags & QH_RDONLY)
+		dbflags |= DB_RDONLY;
+	else
+		dbflags |= DB_CREATE | DB_THREAD;
+	if (db->open(db, (flags & QH_TXN) ? txnid : NULL, file, database, DB_HASH, dbflags, mode))
 		hashlog_err("hash_cinit: open");
 
 	return id;

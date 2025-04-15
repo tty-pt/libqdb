@@ -380,15 +380,14 @@ void m1_assoc_rhd(void **data, uint32_t *len, void *key, void *value) {
 	*data = ((unsigned *) value);
 }
 
-unsigned gen_open(char *fname, unsigned mode) {
-	static int fmode = 0664;
+unsigned gen_open(char *fname, unsigned mode, unsigned flags) {
 	unsigned existed = access(fname, F_OK) == 0;
 
 	hash_config.file = fname;
-	hash_config.mode = 0664;
-	hash_config.flags = 0;
+	hash_config.mode = flags & QH_RDONLY ? 0644 : 0664;
+	hash_config.flags = flags;
 
-	aux_hdp.flags = 0;
+	aux_hdp.flags = flags;
 	aux_hdp.phd = lhash_init(0, "phd");
 	strlcpy(aux_hdp.fname, fname, BUFSIZ);
 	if (existed) {
@@ -448,12 +447,12 @@ main(int argc, char *argv[])
 			}
 			break;
 		case 'a':
-			gen_open(optarg, 0);
+			gen_open(optarg, 0, QH_RDONLY);
 			lhash_new(ahds, &aux_hdp);
 			ahds_n++;
 			break;
 		case 'q':
-			gen_open(optarg, 0);
+			gen_open(optarg, 0, QH_RDONLY);
 			lhash_new(qhds, &aux_hdp);
 			qhds_n++;
 			break;
@@ -473,7 +472,7 @@ main(int argc, char *argv[])
 		}
 
 	optind = 1;
-	if ((mode = gen_open(fname, mode)))
+	if ((mode = gen_open(fname, mode, nochange ? QH_RDONLY : 0)))
 		gen_r = m1_gen;
 	prim = aux_hdp;
 	srandom(time(NULL));
