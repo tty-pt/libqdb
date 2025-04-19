@@ -27,7 +27,7 @@ struct meta meta[HASH_DBS_MAX];
 static struct idm idm;
 
 static int hash_first = 1;
-DB_ENV *env;
+DB_ENV *env = NULL;
 
 static void
 hash_logger_stderr(int type __attribute__((unused)), const char *fmt, ...)
@@ -115,11 +115,7 @@ hash_cinit(const char *file, const char *database, int mode, int flags)
 		if (db->set_flags(db, DB_DUP))
 			hashlog_err("hash_cinit: set_flags");
 
-	dbflags = 0;
-	if (flags & QH_RDONLY)
-		dbflags |= DB_RDONLY;
-	else
-		dbflags |= DB_CREATE | DB_THREAD;
+	dbflags = (env ? DB_THREAD : 0) | (flags & QH_RDONLY ? DB_RDONLY : DB_CREATE);
 	if (db->open(db, (flags & QH_TXN) ? txnid : NULL, file, database, DB_HASH, dbflags, mode))
 		hashlog_err("hash_cinit: open");
 

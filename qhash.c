@@ -392,8 +392,11 @@ unsigned gen_open(char *fname, unsigned mode, unsigned flags) {
 	strlcpy(aux_hdp.fname, fname, BUFSIZ);
 	if (existed) {
 		lhash_get(aux_hdp.phd, &mode, -2);
-		aux_hdp.flags = 1;
+		aux_hdp.flags |= 1;
 	}
+	flags &= ~QH_RDONLY;
+	hash_config.mode = flags & QH_RDONLY ? 0644 : 0664;
+	hash_config.flags = flags;
 	if (mode) {
 		aux_hdp.hd[0] = ahash_init("hd"); // needed for dupes
 		aux_hdp.hd[1] = ahash_init("rhd");
