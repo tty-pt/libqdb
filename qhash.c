@@ -78,11 +78,11 @@ gen_t m1_gen[2] = {{
 	.vdel = m1_vdel,
 	.put = m1_put, .cond = m1_cond,
 }}, m0_gen[2] = {{
-	.key = &qdb_string, .value = &qdb_unsigned,
+	.key = &qdb_unsigned, .value = &qdb_string,
 	.vdel = m0_vdel,
 	.put = m0_put, .cond = m0_cond,
 }, {
-	.key = &qdb_unsigned, .value = &qdb_string,
+	.key = &qdb_string, .value = &qdb_unsigned,
 	.vdel = m0_vdel,
 	.put = m0_put, .cond = m0_cond,
 }}, gen, *gen_r;
@@ -344,24 +344,24 @@ unsigned gen_open(char *fname, unsigned mode, unsigned flags) {
 	static unsigned minus_two = -2;
 	unsigned existed = access(fname, F_OK) == 0;
 
-	hash_config.file = fname;
-	hash_config.mode = flags & QH_RDONLY ? 0644 : 0664;
-	hash_config.flags = flags;
-	hash_config.type = DB_BTREE;
+	qdb_config.file = fname;
+	qdb_config.mode = flags & QH_RDONLY ? 0644 : 0664;
+	qdb_config.flags = flags;
+	qdb_config.type = DB_BTREE;
 
 	aux_hdp.flags = flags;
 	aux_hdp.phd = mode
-		? qdb_init("phd", &qdb_unsigned, &qdb_string)
-		: qdb_init("phd", &qdb_unsigned_pair, &qdb_unsigned);
+		? qdb_init("phd", &qdb_unsigned_pair, &qdb_unsigned)
+		: qdb_linit("phd", &qdb_string);
 	strlcpy(aux_hdp.fname, fname, BUFSIZ);
 	if (existed) {
 		qdb_get(aux_hdp.phd, &mode, &minus_two);
 		aux_hdp.flags |= 1;
 	}
 	flags &= ~QH_RDONLY;
-	hash_config.mode = flags & QH_RDONLY ? 0644 : 0664;
-	hash_config.flags = flags;
-	hash_config.type = DB_HASH;
+	qdb_config.mode = flags & QH_RDONLY ? 0644 : 0664;
+	qdb_config.flags = flags;
+	qdb_config.type = DB_HASH;
 	if (mode) {
 		aux_hdp.hd[0] = qdb_ainit("hd"); // needed for dupes
 		aux_hdp.hd[1] = qdb_ainit("rhd");
@@ -369,12 +369,12 @@ unsigned gen_open(char *fname, unsigned mode, unsigned flags) {
 		qdb_assoc(aux_hdp.hd[1], aux_hdp.phd, m1_assoc_rhd);
 	} else {
 		aux_hdp.hd[0] = qdb_init("hd", &qdb_unsigned, &qdb_string); // not really needed but here for consistency
-		aux_hdp.hd[1] = qdb_ainit("rhd");
+		aux_hdp.hd[1] = qdb_init("rhd", &qdb_string, &qdb_unsigned);
 		qdb_assoc(aux_hdp.hd[0], aux_hdp.phd, assoc_hd);
 		qdb_assoc(aux_hdp.hd[1], aux_hdp.phd, m0_assoc_rhd);
 	}
 	if (!existed)
-		qdb_put(aux_hdp.phd, &minus_two, &mode);
+		qdb__put(aux_hdp.phd, &minus_two, sizeof(unsigned), &mode, sizeof(unsigned));
 	return mode;
 }
 
