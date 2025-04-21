@@ -25,19 +25,15 @@ typedef struct {
 	qdb_type_t *value, *key;
 } gen_t;
 
+qdb_type_t qdb_hdpair = {
+	.len = sizeof(struct hdpair),
+};
+
 char value_buf[BUFSIZ], key_buf[BUFSIZ], *col;
 
 unsigned qhds, ahds, qhds_n = 0, ahds_n = 0;
 
 unsigned mode = 0, reverse = 0, tmprev_q, tmprev_a, bail = 0;
-
-void u_del(unsigned hd, void *key) {
-	uhash_del(hd, * (unsigned *) key);
-}
-
-void s_del(unsigned hd, void *key) {
-	shash_del(hd, key);
-}
 
 int m0_vdel(unsigned hd, void *key, void *value) {
 	return 1;
@@ -47,22 +43,22 @@ int m1_vdel(unsigned hd, void *key, void *value) {
 	if (!col)
 		return 1;
 
-	ahash_remove(hd, * (unsigned *) key, * (unsigned *) value);
+	qdb_rem(hd, key, value);
 	return 0;
 }
 
 void m0_put() {
 	if (col)
-		lhash_put(prim.phd, * (unsigned *) key_buf, value_buf);
+		qdb_put(prim.phd, key_buf, value_buf);
 	else {
-		unsigned id = lhash_new(prim.phd, value_buf);
+		unsigned id = qdb_new(prim.phd, value_buf);
 		printf("%u\n", id);
 	}
 }
 
 void m1_put(void *key, void *value) {
 	unsigned values[2] = { * (unsigned *) key, * (unsigned *) value };
-	hash_put(prim.phd, values, sizeof(values), &values[1], sizeof(unsigned));
+	qdb_put(prim.phd, values, &values[1]);
 }
 
 int m0_cond(unsigned qhds_n, unsigned is_value) {
@@ -113,20 +109,20 @@ usage(char *prog)
 }
 
 int u_get(unsigned hd, void *value, void *key) {
-	return uhash_get(aux_hdp.hd[0], value, * (unsigned *) key);
+	return qdb_get(aux_hdp.hd[0], value, key);
 }
 
 static inline void *rec_query(unsigned qhds, char *tbuf, char *buf, unsigned tmprev) {
-	struct hash_cursor c2 = lhash_iter(qhds);
+	qdb_cur_t c2 = qdb_iter(qhds, NULL);
 	unsigned aux;
 	char *aux2;
 
-	while (lhash_next(&aux, &aux_hdp, &c2)) {
+	while (qdb_next(&aux, &aux_hdp, &c2)) {
 		tmprev = !tmprev;
 		/* fprintf(stderr, "req_query %u %u %u %u %s", qhds, tmprev, aux_hdp.hd[tmprev], * (unsigned *) buf, buf); */
-		if (hash_get(aux_hdp.hd[tmprev], tbuf, buf, m0_gen[!tmprev_q].key->measure(key_buf))) {
+		if (qdb_get(aux_hdp.hd[tmprev], tbuf, buf)) {
 			/* fprintf(stderr, "?\n"); */
-			hash_fin(&c2);
+			qdb_fin(&c2);
 			return NULL;
 		}
 		/* fprintf(stderr, "!\n"); */
@@ -187,7 +183,7 @@ static inline void gen_del() {
 	char *iter_key = gen_lookup(optarg);
 
 	if (gen.vdel(prim.hd[!tmprev_q], value_buf, key_buf))
-		hash_del(prim.hd[!tmprev_q], value_buf, gen.key->measure(value_buf));
+		qdb_del(prim.hd[!tmprev_q], value_buf);
 }
 
 static inline int assoc_exists(char *key_buf) {
@@ -202,9 +198,9 @@ static inline int assoc_exists(char *key_buf) {
 static inline void assoc_print() {
 	static char alt_buf[BUFSIZ];
 	unsigned aux;
-	struct hash_cursor c2 = lhash_iter(ahds);
+	qdb_cur_t c2 = qdb_iter(ahds, NULL);
 
-	while (lhash_next(&aux, &aux_hdp, &c2)) {
+	while (qdb_next(&aux, &aux_hdp, &c2)) {
 		putchar(' ');
 		if (u_get(aux_hdp.hd[0], alt_buf, key_buf)) {
 			s_print("-1");
@@ -212,7 +208,7 @@ static inline void assoc_print() {
 		}
 		s_print(alt_buf);
 		if (bail) {
-			hash_fin(&c2);
+			qdb_fin(&c2);
 			break;
 		}
 	}
@@ -220,12 +216,12 @@ static inline void assoc_print() {
 
 static inline void gen_rand() {
 	unsigned count = 0, rand;
-	struct hash_cursor c;
+	qdb_cur_t c;
 	char *iter_key = gen_lookup(mode ? optarg : NULL);
 
-	c = hash_iter(prim.hd[!tmprev_q], iter_key, gen.key->measure(iter_key));
+	c = qdb_iter(prim.hd[!tmprev_q], iter_key);
 
-	while (lhash_next((unsigned *) key_buf, value_buf, &c))
+	while (qdb_next((unsigned *) key_buf, value_buf, &c))
 		if (assoc_exists(key_buf))
 			count ++;
 
@@ -236,13 +232,13 @@ static inline void gen_rand() {
 
 	rand = random() % count;
 
-	c = hash_iter(prim.hd[!tmprev_q], iter_key, gen.key->measure(iter_key));
+	c = qdb_iter(prim.hd[!tmprev_q], iter_key);
 
-	while (lhash_next((unsigned *) key_buf, value_buf, &c))
+	while (qdb_next((unsigned *) key_buf, value_buf, &c))
 		if (!assoc_exists(key_buf))
 			continue;
 		else if ((--count) <= rand) {
-			hash_fin(&c);
+			qdb_fin(&c);
 			break;
 		}
 
@@ -268,30 +264,30 @@ static inline void _gen_get() {
 
 static void gen_get(char *str) {
 	char *iter_key = gen_lookup(str);
-	struct hash_cursor c;
+	qdb_cur_t c;
 
 	if (!iter_key) {
 		printf("-1\n");
 		return;
 	}
 
-	c = hash_iter(prim.hd[!tmprev_q], iter_key, gen.key->measure(iter_key));
+	c = qdb_iter(prim.hd[!tmprev_q], iter_key);
 
-	while (lhash_next((unsigned *) key_buf, value_buf, &c))
+	while (qdb_next((unsigned *) key_buf, value_buf, &c))
 		if (assoc_exists(key_buf))
 			_gen_get();
 }
 
 static void gen_list() {
-	struct hash_cursor c;
+	qdb_cur_t c;
 	unsigned cond;
 
 	gen_lookup(NULL);
 	cond = gen.cond(qhds_n, 1);
 
-	c = hash_iter(prim.hd[!tmprev_q], NULL, gen.key->measure(NULL));
+	c = qdb_iter(prim.hd[!tmprev_q], NULL);
 
-	while (lhash_next((unsigned *) key_buf, value_buf, &c)) {
+	while (qdb_next((unsigned *) key_buf, value_buf, &c)) {
 		rec_query(qhds, key_buf, value_buf, !cond);
 		_gen_get();
 	}
@@ -304,7 +300,7 @@ static inline void gen_put() {
 
 static inline void gen_list_missing() {
 	unsigned aux;
-	struct hash_cursor c;
+	qdb_cur_t c;
 	gen_lookup(NULL);
 
 	if (!qhds_n) {
@@ -312,12 +308,12 @@ static inline void gen_list_missing() {
 		return;
 	}
 
-	c = hash_iter(prim.hd[!tmprev_q], NULL, 0);
-	while (lhash_next((unsigned *) key_buf, value_buf, &c)) {
-		struct hash_cursor c2 = lhash_iter(qhds);
+	c = qdb_iter(prim.hd[!tmprev_q], NULL);
+	while (qdb_next((unsigned *) key_buf, value_buf, &c)) {
+		qdb_cur_t c2 = qdb_iter(qhds, NULL);
 
-		while (lhash_next(&aux, &aux_hdp, &c2))
-			if (hash_get(aux_hdp.hd[!tmprev_q], key_buf, value_buf, m0_gen[tmprev_q].key->measure(key_buf))) {
+		while (qdb_next(&aux, &aux_hdp, &c2))
+			if (qdb_get(aux_hdp.hd[!tmprev_q], key_buf, value_buf)) {
 				u_print(key_buf);
 				putchar(' ');
 				gen.key->print(value_buf);
@@ -345,6 +341,7 @@ void m1_assoc_rhd(void **data, uint32_t *len, void *key, void *value) {
 }
 
 unsigned gen_open(char *fname, unsigned mode, unsigned flags) {
+	static unsigned minus_two = -2;
 	unsigned existed = access(fname, F_OK) == 0;
 
 	hash_config.file = fname;
@@ -353,10 +350,12 @@ unsigned gen_open(char *fname, unsigned mode, unsigned flags) {
 	hash_config.type = DB_BTREE;
 
 	aux_hdp.flags = flags;
-	aux_hdp.phd = lhash_init(0, "phd");
+	aux_hdp.phd = mode
+		? qdb_init("phd", &qdb_unsigned, &qdb_string)
+		: qdb_init("phd", &qdb_unsigned_pair, &qdb_unsigned);
 	strlcpy(aux_hdp.fname, fname, BUFSIZ);
 	if (existed) {
-		lhash_get(aux_hdp.phd, &mode, -2);
+		qdb_get(aux_hdp.phd, &mode, &minus_two);
 		aux_hdp.flags |= 1;
 	}
 	flags &= ~QH_RDONLY;
@@ -364,25 +363,25 @@ unsigned gen_open(char *fname, unsigned mode, unsigned flags) {
 	hash_config.flags = flags;
 	hash_config.type = DB_HASH;
 	if (mode) {
-		aux_hdp.hd[0] = ahash_init("hd"); // needed for dupes
-		aux_hdp.hd[1] = ahash_init("rhd");
-		hash_assoc(aux_hdp.hd[0], aux_hdp.phd, assoc_hd);
-		hash_assoc(aux_hdp.hd[1], aux_hdp.phd, m1_assoc_rhd);
+		aux_hdp.hd[0] = qdb_ainit("hd"); // needed for dupes
+		aux_hdp.hd[1] = qdb_ainit("rhd");
+		qdb_assoc(aux_hdp.hd[0], aux_hdp.phd, assoc_hd);
+		qdb_assoc(aux_hdp.hd[1], aux_hdp.phd, m1_assoc_rhd);
 	} else {
 		aux_hdp.hd[0] = qdb_init("hd", &qdb_unsigned, &qdb_string); // not really needed but here for consistency
-		aux_hdp.hd[1] = ahash_init("rhd");
-		hash_assoc(aux_hdp.hd[0], aux_hdp.phd, assoc_hd);
-		hash_assoc(aux_hdp.hd[1], aux_hdp.phd, m0_assoc_rhd);
+		aux_hdp.hd[1] = qdb_ainit("rhd");
+		qdb_assoc(aux_hdp.hd[0], aux_hdp.phd, assoc_hd);
+		qdb_assoc(aux_hdp.hd[1], aux_hdp.phd, m0_assoc_rhd);
 	}
 	if (!existed)
-		uhash_put(aux_hdp.phd, -2, &mode, sizeof(mode));
+		qdb_put(aux_hdp.phd, &minus_two, &mode);
 	return mode;
 }
 
 static inline void hdpair_close(struct hdpair *pair, unsigned nochange) {
-	hash_close(pair->phd, 0);
-	hash_close(pair->hd[0], 0);
-	hash_close(pair->hd[1], 0);
+	qdb_close(pair->phd, 0);
+	qdb_close(pair->hd[0], 0);
+	qdb_close(pair->hd[1], 0);
 	if (!(pair->flags & 1) && nochange)
 		unlink(pair->fname);
 }
@@ -399,8 +398,8 @@ main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
-	ahds = lhash_init(sizeof(struct hdpair), NULL);
-	qhds = lhash_init(sizeof(struct hdpair), NULL);
+	ahds = qdb_linit(NULL, &qdb_hdpair);
+	qhds = qdb_linit(NULL, &qdb_hdpair);
 
 	gen_r = m0_gen;
 
@@ -417,12 +416,12 @@ main(int argc, char *argv[])
 			break;
 		case 'a':
 			gen_open(optarg, 0, QH_RDONLY);
-			lhash_new(ahds, &aux_hdp);
+			qdb_new(ahds, &aux_hdp);
 			ahds_n++;
 			break;
 		case 'q':
 			gen_open(optarg, 0, QH_RDONLY);
-			lhash_new(qhds, &aux_hdp);
+			qdb_new(qhds, &aux_hdp);
 			qhds_n++;
 			break;
 		case 'x':
@@ -459,13 +458,13 @@ main(int argc, char *argv[])
 	hdpair_close(&prim, nochange);
 
 	unsigned key;
-	struct hash_cursor c = lhash_iter(ahds);
+	qdb_cur_t c = qdb_iter(ahds, NULL);
 
-	while (lhash_next(&key, &aux_hdp, &c))
+	while (qdb_next(&key, &aux_hdp, &c))
 		hdpair_close(&aux_hdp, 1);
 
-	c = lhash_iter(qhds);
+	c = qdb_iter(qhds, NULL);
 
-	while (lhash_next(&key, &aux_hdp, &c))
+	while (qdb_next(&key, &aux_hdp, &c))
 		hdpair_close(&aux_hdp, 1);
 }

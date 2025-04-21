@@ -7,25 +7,13 @@
 #include <sys/queue.h>
 #include <syslog.h>
 
-#define HASH_DBS_MAX (64 * 512)
 #define HASH_NOT_FOUND NULL
-#define QDB_LEN(hd, MEMBER, ptr) (meta[hd].MEMBER->measure ? meta[hd].MEMBER->measure(ptr) : meta[hd].MEMBER->len)
 
 enum qhash_priv_flags {
 	QH_NOT_FIRST = 1, // internal iteration flag
-	QH_AINDEX = 32, // auto index db (implies unsigned key)
-};
-
-struct meta {
-	size_t len;
-	int flags;
-	assoc_t assoc;
-	struct idm idm;
-	qdb_type_t *key, *value;
 };
 
 static DB *hash_dbs[HASH_DBS_MAX];
-struct meta meta[HASH_DBS_MAX];
 
 static struct idm idm;
 
@@ -63,6 +51,14 @@ hash_put(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len
 	DBT key, data;
 	int ret;
 
+	if (qdb_meta[hd].flags & QH_AINDEX) {
+		unsigned id = * (unsigned *) key_r, last;
+		if (qdb_meta[hd].idm.last <= id)
+			qdb_meta[hd].idm.last = id + 1;
+		for (last = qdb_meta[hd].idm.last; last < id; last++)
+			idml_push(&qdb_meta[hd].idm.free, last);
+	}
+
 	memset(&key, 0, sizeof(DBT));
 	memset(&data, 0, sizeof(DBT));
 
@@ -78,7 +74,7 @@ hash_put(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len
 		hashlog_err("hash_put get_flags");
 	dupes = flags & DB_DUP;
 
-	ret = db->put(db, hd && (meta[hd].flags & QH_TXN) ? txnid : NULL, &key, &data, 0);
+	ret = db->put(db, hd && (qdb_meta[hd].flags & QH_TXN) ? txnid : NULL, &key, &data, 0);
 	if (ret && (ret != DB_KEYEXIST || !dupes))
 		hashlog(LOG_WARNING, "hash_put");
 	return ret;
@@ -89,7 +85,7 @@ int qdb_put(unsigned hd, void *key, void *value) {
 }
 
 unsigned
-hash_cinit(const char *file, const char *database, int mode, int flags, int type, qdb_type_t *key_type, qdb_type_t *value_type)
+qdb_initc(const char *file, const char *database, int mode, int flags, int type, qdb_type_t *key_type, qdb_type_t *value_type)
 {
 	DB *db;
 	unsigned id, dbflags = 0;
@@ -99,22 +95,22 @@ hash_cinit(const char *file, const char *database, int mode, int flags, int type
 		idm_new(&idm);
 
 		if (db_create(&hash_dbs[0], NULL, 0))
-			hashlog_err("hash_cinit: db_create ids_db");
+			hashlog_err("qdb_initc: db_create ids_db");
 
 		if (hash_dbs[0]->open(hash_dbs[0], NULL, NULL, NULL, DB_HASH, DB_CREATE, 644))
-			hashlog_err("hash_cinit: open ids_db");
+			hashlog_err("qdb_initc: open ids_db");
 
-		memset(meta, 0, sizeof(meta));
+		memset(qdb_meta, 0, sizeof(qdb_meta));
 	}
 
 	hash_first = 0;
 	id = idm_new(&idm);
-	meta[id].flags = flags;
-	meta[id].key = key_type;
-	meta[id].value = value_type;
+	qdb_meta[id].flags = flags;
+	qdb_meta[id].key = key_type;
+	qdb_meta[id].value = value_type;
 
 	if (db_create(&hash_dbs[id], env, 0))
-		hashlog_err("hash_cinit: db_create");
+		hashlog_err("qdb_initc: db_create");
 
 	// this is needed for associations
 	db = hash_dbs[id];
@@ -122,11 +118,11 @@ hash_cinit(const char *file, const char *database, int mode, int flags, int type
 
 	if (flags & QH_DUP)
 		if (db->set_flags(db, DB_DUP))
-			hashlog_err("hash_cinit: set_flags");
+			hashlog_err("qdb_initc: set_flags");
 
 	dbflags = (env ? DB_THREAD : 0) | (flags & QH_RDONLY ? DB_RDONLY : DB_CREATE);
 	if (db->open(db, (flags & QH_TXN) ? txnid : NULL, file, database, flags & DB_RDONLY ? DB_UNKNOWN : type, dbflags, mode))
-		hashlog_err("hash_cinit: open");
+		hashlog_err("qdb_initc: open");
 
 	return id;
 }
@@ -144,7 +140,7 @@ void * __hash_get(unsigned hd, size_t *size, void *key_r, size_t key_len)
 	key.size = key_len;
 	data.flags = DB_DBT_MALLOC;
 
-	ret = db->get(db, hd && (meta[hd].flags & QH_TXN) ? txnid : NULL, &key, &data, 0);
+	ret = db->get(db, hd && (qdb_meta[hd].flags & QH_TXN) ? txnid : NULL, &key, &data, 0);
 
 	if (ret == DB_NOTFOUND)
 		return NULL;
@@ -167,25 +163,11 @@ int hash_get(unsigned hd, void *value_r, void *key_r, size_t key_len)
 	return 0;
 }
 
-int qdb_get(unsigned hd, void *target, void *key) {
-	return hash_get(hd, target, key, QDB_LEN(hd, key, key));
-}
-
 int hash_exists(unsigned hd, void *key_r, size_t key_len)
 {
 	size_t size;
 
 	if (__hash_get(hd, &size, key_r, key_len))
-		return 1;
-
-	return 0;
-}
-
-int qdb_exists(unsigned hd, void *key)
-{
-	size_t size;
-
-	if (__hash_get(hd, &size, key, QDB_LEN(hd, key, key)))
 		return 1;
 
 	return 0;
@@ -204,7 +186,7 @@ int hash_pget(unsigned hd, void *pkey_r, void *key_r, size_t key_len) {
 	key.size = key_len;
 	pkey.flags = data.flags = DB_DBT_MALLOC;
 
-	ret = db->pget(db, (meta[hd].flags & QH_TXN) ? txnid : NULL, &key, &pkey, &data, 0);
+	ret = db->pget(db, (qdb_meta[hd].flags & QH_TXN) ? txnid : NULL, &key, &pkey, &data, 0);
 
 	if (ret == DB_NOTFOUND)
 		return 1;
@@ -215,10 +197,6 @@ int hash_pget(unsigned hd, void *pkey_r, void *key_r, size_t key_len) {
 	return 0;
 }
 
-int qdb_pget(unsigned hd, void *pkey, void *key) {
-	return hash_pget(hd, pkey, key, QDB_LEN(hd, key, key));
-}
-
 int
 map_assoc(DB *sec, const DBT *key, const DBT *data, DBT *result)
 {
@@ -226,20 +204,20 @@ map_assoc(DB *sec, const DBT *key, const DBT *data, DBT *result)
 	result->flags = DB_DBT_MALLOC;
 	unsigned hd;
 	hash_get(0, &hd, &sec, sizeof(DB *)); // assumed == 0
-	meta[hd].assoc(&result->data, &result->size, key->data, data->data);
+	qdb_meta[hd].assoc(&result->data, &result->size, key->data, data->data);
 	return 0;
 }
 
 void
-hash_assoc(unsigned hd, unsigned link, assoc_t cb)
+qdb_assoc(unsigned hd, unsigned link, qdb_assoc_t cb)
 {
 	DB *db = hash_dbs[hd];
 	DB *ldb = hash_dbs[link];
-	meta[hd].assoc = cb;
-	meta[hd].flags |= QH_SEC;
+	qdb_meta[hd].assoc = cb;
+	qdb_meta[hd].flags |= QH_SEC;
 
-	if (ldb->associate(ldb, (meta[hd].flags & QH_TXN) ? txnid : NULL, db, map_assoc, DB_CREATE | DB_IMMUTABLE_KEY))
-		hashlog_err("hash_assoc");
+	if (ldb->associate(ldb, (qdb_meta[hd].flags & QH_TXN) ? txnid : NULL, db, map_assoc, DB_CREATE | DB_IMMUTABLE_KEY))
+		hashlog_err("qdb_assoc");
 }
 
 int
@@ -250,7 +228,7 @@ hash_vdel(unsigned hd, void *key_data, size_t key_size, void *value_data, size_t
 	DBC *cursor;
 	int ret, flags = DB_SET;
 
-	if ((ret = db->cursor(db, hd && (meta[hd].flags & QH_TXN) ? txnid : NULL, &cursor, 0)) != 0) {
+	if ((ret = db->cursor(db, hd && (qdb_meta[hd].flags & QH_TXN) ? txnid : NULL, &cursor, 0)) != 0) {
 		hashlog(LOG_ERR, "cursor: %s", db_strerror(ret));
 		return ret;
 	}
@@ -276,7 +254,7 @@ hash_vdel(unsigned hd, void *key_data, size_t key_size, void *value_data, size_t
 	return ret == DB_NOTFOUND ? 0 : ret;
 }
 
-int qdb_vdel(unsigned hd, void *key, void *value) {
+int qdb_rem(unsigned hd, void *key, void *value) {
 	return hash_vdel(hd, key, QDB_LEN(hd, key, key), value, QDB_LEN(hd, value, value));
 }
 
@@ -293,22 +271,22 @@ struct hash_internal {
 	get_t *get;
 };
 
-struct hash_cursor
+qdb_cur_t
 hash_iter(unsigned hd, void *key, size_t key_len) {
 	DB *db = hash_dbs[hd];
-	struct hash_cursor cur;
+	qdb_cur_t cur;
 	struct hash_internal *internal = malloc(sizeof(struct hash_internal));
 	cur.internal = internal;
 	internal->hd = hd;
 	internal->cursor = NULL;
-	db->cursor(db, hd && (meta[hd].flags & QH_TXN) ? txnid : NULL, &internal->cursor, 0);
+	db->cursor(db, hd && (qdb_meta[hd].flags & QH_TXN) ? txnid : NULL, &internal->cursor, 0);
 	memset(&internal->pkey, 0, sizeof(DBT));
 	memset(&internal->key, 0, sizeof(DBT));
 	memset(&internal->data, 0, sizeof(DBT));
 	internal->pkey.data = internal->key.data = key;
 	internal->key.flags = internal->pkey.flags = internal->data.flags = DB_DBT_MALLOC;
 	internal->pkey.size = internal->key.size = key_len;
-	internal->get = (meta[hd].flags & QH_SEC)
+	internal->get = (qdb_meta[hd].flags & QH_SEC)
 		? internal->cursor->pget
 		: primary_get;
 	cur.flags = 0;
@@ -317,11 +295,7 @@ hash_iter(unsigned hd, void *key, size_t key_len) {
 	return cur;
 }
 
-struct hash_cursor qdb_iter(unsigned hd, char *key) {
-	return hash_iter(hd, key, QDB_LEN(hd, key, key));
-}
-
-void hash_fin(struct hash_cursor *cur) {
+void qdb_fin(qdb_cur_t *cur) {
 	struct hash_internal *internal = cur->internal;
 	internal->cursor->close(internal->cursor);
 	free(internal);
@@ -329,7 +303,7 @@ void hash_fin(struct hash_cursor *cur) {
 }
 
 int
-hash_next(void *key, void *value, struct hash_cursor *cur)
+qdb_next(void *key, void *value, qdb_cur_t *cur)
 {
 	struct hash_internal *internal = cur->internal;
 	ssize_t ret;
@@ -345,12 +319,18 @@ hash_next(void *key, void *value, struct hash_cursor *cur)
 
 	if ((ret = internal->get(internal->cursor, &internal->key, &internal->pkey, &internal->data, flags))) {
 		if (ret != DB_NOTFOUND)
-			hashlog(LOG_ERR, "hash_next: %u %d %s", internal->hd, cur->flags, db_strerror(ret));
+			hashlog(LOG_ERR, "qdb_next: %u %d %s", internal->hd, cur->flags, db_strerror(ret));
 		internal->cursor->close(internal->cursor);
 		free(internal);
 		cur->internal = NULL;
 		return 0;
-	} else if (key) {
+	}
+
+	if ((qdb_meta[internal->hd].flags & QH_AINDEX)
+			&& * (unsigned *) key == (unsigned) -2)
+		return 0;
+
+	if (key) {
 		memcpy(key, internal->pkey.data, internal->pkey.size);
 		memcpy(value, internal->data.data, internal->data.size);
 	}
@@ -362,19 +342,19 @@ hash_next(void *key, void *value, struct hash_cursor *cur)
 }
 
 int
-hash_cdel(struct hash_cursor *cur) {
+hash_cdel(qdb_cur_t *cur) {
 	struct hash_internal *internal = cur->internal;
 	return internal->cursor->c_del(internal->cursor, 0);
 }
 
-int hash_drop(unsigned hd) {
+int qdb_drop(unsigned hd) {
 	DB *db = hash_dbs[hd];
 	DBT key, data;
 	DBC *cursor;
 	int ret, flags = DB_FIRST;
 
-	if ((ret = db->cursor(db, (meta[hd].flags & QH_TXN) ? txnid : NULL, &cursor, 0)) != 0) {
-		hashlog(LOG_ERR, "hash_drop: cursor: %s\n", db_strerror(ret));
+	if ((ret = db->cursor(db, (qdb_meta[hd].flags & QH_TXN) ? txnid : NULL, &cursor, 0)) != 0) {
+		hashlog(LOG_ERR, "qdb_drop: cursor: %s\n", db_strerror(ret));
 		return ret;
 	}
 
@@ -392,14 +372,14 @@ int hash_drop(unsigned hd) {
 }
 
 void
-hash_close(unsigned hd, unsigned flags) {
+qdb_close(unsigned hd, unsigned flags) {
 	DB *db = hash_dbs[hd];
 	db->close(db, flags);
 	idm_del(&idm, hd);
 }
 
 void
-hash_sync(unsigned hd) {
+qdb_sync(unsigned hd) {
 	DB *db = hash_dbs[hd];
 	db->sync(db, 0);
 }
@@ -414,31 +394,31 @@ unsigned idm_new(struct idm *idm) {
 }
 
 unsigned lhash_cinit(size_t item_len, const char *file, const char *database, int mode, unsigned flags) {
-	unsigned hd = hash_cinit(file, database, mode, flags, DB_HASH, &qdb_unsigned, NULL), last = 0;
+	unsigned hd = qdb_initc(file, database, mode, flags, DB_HASH, &qdb_unsigned, NULL), last = 0;
 	unsigned ign;
 	char buf[item_len];
-	meta[hd].len = item_len;
-	meta[hd].flags |= QH_AINDEX;
-	SLIST_INIT(&meta[hd].idm.free);
-	struct hash_cursor c = lhash_iter(hd);
+	qdb_meta[hd].len = item_len;
+	qdb_meta[hd].flags |= QH_AINDEX;
+	SLIST_INIT(&qdb_meta[hd].idm.free);
+	qdb_cur_t c = qdb_iter(hd, NULL);
 
-	while (lhash_next(&ign, buf, &c))
+	while (qdb_next(&ign, buf, &c))
 		if (ign >= last)
 			last = ign + 1;
 
-	meta[hd].idm.last = last;
-	for (last = 0; last < meta[hd].idm.last; last++) {
+	qdb_meta[hd].idm.last = last;
+	for (last = 0; last < qdb_meta[hd].idm.last; last++) {
 		size_t size;
 		void *value = __hash_get(hd, &size, &last, sizeof(unsigned));
 		if (!value)
-			idml_push(&meta[hd].idm.free, last);
+			idml_push(&qdb_meta[hd].idm.free, last);
 	}
 
 	return hd;
 }
 
 static unsigned lh_len(unsigned hd, char *item) {
-	size_t len = meta[hd].len;
+	size_t len = qdb_meta[hd].len;
 
 	if (len != 0)
 		return len;
@@ -446,33 +426,17 @@ static unsigned lh_len(unsigned hd, char *item) {
 	return strlen(item) + 1;
 }
 
-unsigned lhash_new(unsigned hd, void *item) {
-	unsigned id = idm_new(&meta[hd].idm);
-	uhash_put(hd, id, item, lh_len(hd, item));
+unsigned qdb_new(unsigned hd, void *item) {
+	unsigned id = idm_new(&qdb_meta[hd].idm);
+	qdb_put(hd, &id, item);
 	return id;
 }
 
-/* delete a value from an uhash */
-void uhash_del(unsigned hd, unsigned key) {
-	if (meta[hd].flags & QH_AINDEX)
-		idm_del(&meta[hd].idm, key);
-	hash_del(hd, &key, sizeof(key));
-}
-
-int lhash_put(unsigned hd, unsigned id, void *source) {
-	unsigned last;
-	if (meta[hd].idm.last <= id)
-		meta[hd].idm.last = id + 1;
-	for (last = meta[hd].idm.last; last < id; last++)
-		idml_push(&meta[hd].idm.free, last);
-	return uhash_put(hd, id, source, lh_len(hd, source));
-}
-
-void hash_env_set(void *value) {
+void qdb_env_set(void *value) {
 	env = (DB_ENV *) value;
 }
 
-void *hash_env_pop(void) {
+void *qdb_env_pop(void) {
 	DB_ENV *ret = env;
 	env = NULL;
 	return ret;
