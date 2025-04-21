@@ -52,6 +52,36 @@ extern DB_TXN *txnid;
 		while (!name ## _pop(list)); \
 	}
 
+typedef void qdb_print_t(void *value);
+typedef size_t qdb_measure_t(void *value);
+
+typedef struct {
+	qdb_print_t *print;
+	qdb_measure_t *measure;
+	size_t len;
+} qdb_type_t;
+
+void u_print(void *value) {
+	printf("%u", * (unsigned *) value);
+}
+
+void s_print(void *value) {
+	printf("%s", (char *) value);
+}
+
+size_t s_measure(void *value) {
+	return value ? strlen(value) + 1 : 0;
+}
+
+qdb_type_t qdb_string = {
+	.print = s_print,
+	.measure = s_measure,
+}, qdb_unsigned = {
+	.print = u_print,
+	.measure = NULL,
+	.len = sizeof(unsigned),
+};
+
 /* ID MANAGEMENT UNIT */
 
 FILO(idml, unsigned)
@@ -63,8 +93,9 @@ struct idm {
 
 static struct hash_config {
 	int mode, flags;
+	DBTYPE type;
 	char *file;
-} hash_config = { .mode = 0644, .flags = 0, .file = NULL };
+} hash_config = { .mode = 0644, .flags = 0, .type = DB_HASH, .file = NULL };
 
 typedef void (*log_t)(int type, const char *fmt, ...);
 
@@ -106,7 +137,7 @@ struct hash_cursor {
 typedef void (*assoc_t)(void **data, uint32_t *len, void *key, void *value);
 
 /* initialize a hash (generic) */
-unsigned hash_cinit(const char *file, const char *database, int mode, int flags);
+unsigned hash_cinit(const char *file, const char *database, int mode, int flags, int type, qdb_type_t *key_type, qdb_type_t *value_type);
 
 /* associate as a secondary DB */
 void hash_assoc(unsigned hd, unsigned link, assoc_t assoc);
@@ -157,8 +188,23 @@ void hash_sync(unsigned hd);
 
 /* initialize an memory-only database */
 static inline unsigned hash_init(char *database) {
-	return hash_cinit(hash_config.file, database, hash_config.mode, hash_config.flags);
+	return hash_cinit(hash_config.file, database, hash_config.mode, hash_config.flags, hash_config.type, NULL, NULL);
 }
+
+/* NEW API for later simplification QDB with generic types and still simple API */
+
+static inline int qdb_init(char *database, qdb_type_t *key_type, qdb_type_t *value_type) {
+	return hash_cinit(hash_config.file, database, hash_config.mode,
+			hash_config.flags, hash_config.type, key_type, value_type);
+}
+
+int qdb_get(unsigned hd, void *target, void *key);
+int qdb_exists(unsigned hd, void *key);
+int qdb_pget(unsigned hd, void *pkey, void *key);
+int qdb_put(unsigned hd, void *key, void *value);
+void qdb_del(unsigned hd, void *key);
+int qdb_vdel(unsigned hd, void *key, void *value);
+struct hash_cursor qdb_iter(unsigned hd, char *key);
 
 /*
  * UNSIGNED TO ANYTHING HASH TABLE (UHASH)
@@ -185,9 +231,7 @@ static inline int uhash_put(unsigned hd, unsigned ref, void *value, unsigned val
 }
 
 /* delete a value from an uhash */
-static inline void uhash_del(unsigned hd, unsigned key) {
-	hash_del(hd, &key, sizeof(key));
-}
+void uhash_del(unsigned hd, unsigned key);
 
 /* delete a certain value from a uhash that supports dupes */
 static inline int
@@ -255,7 +299,7 @@ static inline int lhash_next(unsigned *key, void *value, struct hash_cursor *cur
 
 /* initialize ahash */
 static inline unsigned ahash_cinit(char *fname, char *dbname, int mode, unsigned flags) {
-	return hash_cinit(fname, dbname, mode, QH_DUP | flags);
+	return hash_cinit(fname, dbname, mode, QH_DUP | flags, DB_HASH, &qdb_unsigned, &qdb_unsigned);
 }
 
 /* initialize ahash */

@@ -1,6 +1,6 @@
 {
   "name": "@tty-pt/qhash",
-  "version": "0.6.16",
+  "version": "0.6.18",
   "description": "C lib for easy hashtable usage",
   "main": "index.js",
   "scripts": {

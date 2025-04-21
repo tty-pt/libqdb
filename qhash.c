@@ -6,29 +6,12 @@
 
 DB_TXN *txnid;
 
-typedef struct hash_cursor gen_iter_t(unsigned hd, void *key);
-typedef void gen_del_t(unsigned hd, void *key);
+typedef void del_t(unsigned hd, void *key);
 typedef int gen_vdel_t(unsigned hd, void *key, void *value);
 typedef void print_t(void *value);
+typedef size_t measure_t(void *value);
 typedef void gen_put_t(void *key, void *value);
-typedef int gen_get_t(unsigned hd, void *value, void *key);
 typedef int gen_cond_t(unsigned qhds_n, unsigned is_value);
-
-int u_gen_get(unsigned hd, void *value, void *key) {
-	return uhash_get(hd, value, * (unsigned *) key);
-}
-
-int s_gen_get(unsigned hd, void *value, void *key) {
-	return shash_get(hd, value, key);
-}
-
-int s_gen_pget(unsigned hd, void *value, void *key) {
-	return shash_pget(hd, value, key);
-}
-
-int u_gen_pget(unsigned hd, void *value, void *key) {
-	return uhash_pget(hd, value, * (unsigned *) key);
-}
 
 struct hdpair {
 	unsigned phd, hd[2], flags;
@@ -36,13 +19,10 @@ struct hdpair {
 } aux_hdp, prim;
 
 typedef struct {
-	print_t *value_print;
-	gen_iter_t *iter;
-	gen_del_t *del;
 	gen_vdel_t *vdel;
 	gen_put_t *put;
-	gen_get_t *get;
 	gen_cond_t *cond;
+	qdb_type_t *value, *key;
 } gen_t;
 
 char value_buf[BUFSIZ], key_buf[BUFSIZ], *col;
@@ -50,26 +30,6 @@ char value_buf[BUFSIZ], key_buf[BUFSIZ], *col;
 unsigned qhds, ahds, qhds_n = 0, ahds_n = 0;
 
 unsigned mode = 0, reverse = 0, tmprev_q, tmprev_a, bail = 0;
-
-void u_print(void *value) {
-	printf("%u", * (unsigned *) value);
-}
-
-void s_print(void *value) {
-	printf("%s", (char *) value);
-}
-
-struct hash_cursor u_iter(unsigned hd, void *key) {
-	return hash_iter(hd, key, sizeof(unsigned));
-}
-
-struct hash_cursor s_iter(unsigned hd, void *key) {
-	return hash_iter(hd, key, key ? strlen(key) + 1 : 0);
-}
-
-void m0_u_del(unsigned hd, void *key) {
-	lhash_del(prim.phd, * (unsigned *) key);
-}
 
 void u_del(unsigned hd, void *key) {
 	uhash_del(hd, * (unsigned *) key);
@@ -114,17 +74,21 @@ int m1_cond(unsigned qhds_n, unsigned is_value) {
 }
 
 gen_t m1_gen[2] = {{
-	.value_print = u_print, .iter = u_iter, .del = u_del, .vdel = m1_vdel,
-	.put = m1_put, .get = u_gen_get, .cond = m1_cond,
+	.key = &qdb_unsigned, .value = &qdb_unsigned,
+	.vdel = m1_vdel,
+	.put = m1_put, .cond = m1_cond,
 }, {
-	.value_print = u_print, .iter = u_iter, .del = u_del, .vdel = m1_vdel,
-	.put = m1_put, .get = u_gen_pget, .cond = m1_cond,
+	.key = &qdb_unsigned, .value = &qdb_unsigned,
+	.vdel = m1_vdel,
+	.put = m1_put, .cond = m1_cond,
 }}, m0_gen[2] = {{
-	.value_print = s_print, .iter = s_iter, .del = s_del, .vdel = m0_vdel,
-	.put = m0_put, .get = s_gen_pget, .cond = m0_cond,
+	.key = &qdb_string, .value = &qdb_unsigned,
+	.vdel = m0_vdel,
+	.put = m0_put, .cond = m0_cond,
 }, {
-	.value_print = s_print, .iter = u_iter, .del = m0_u_del, .vdel = m0_vdel,
-	.put = m0_put, .get = u_gen_get, .cond = m0_cond,
+	.key = &qdb_unsigned, .value = &qdb_string,
+	.vdel = m0_vdel,
+	.put = m0_put, .cond = m0_cond,
 }}, gen, *gen_r;
 
 void
@@ -160,7 +124,7 @@ static inline void *rec_query(unsigned qhds, char *tbuf, char *buf, unsigned tmp
 	while (lhash_next(&aux, &aux_hdp, &c2)) {
 		tmprev = !tmprev;
 		/* fprintf(stderr, "req_query %u %u %u %u %s", qhds, tmprev, aux_hdp.hd[tmprev], * (unsigned *) buf, buf); */
-		if (m0_gen[!tmprev].get(aux_hdp.hd[tmprev], tbuf, buf)) {
+		if (hash_get(aux_hdp.hd[tmprev], tbuf, buf, m0_gen[!tmprev_q].key->measure(key_buf))) {
 			/* fprintf(stderr, "?\n"); */
 			hash_fin(&c2);
 			return NULL;
@@ -223,7 +187,7 @@ static inline void gen_del() {
 	char *iter_key = gen_lookup(optarg);
 
 	if (gen.vdel(prim.hd[!tmprev_q], value_buf, key_buf))
-		gen.del(prim.hd[!tmprev_q], value_buf);
+		hash_del(prim.hd[!tmprev_q], value_buf, gen.key->measure(value_buf));
 }
 
 static inline int assoc_exists(char *key_buf) {
@@ -259,7 +223,7 @@ static inline void gen_rand() {
 	struct hash_cursor c;
 	char *iter_key = gen_lookup(mode ? optarg : NULL);
 
-	c = gen.iter(prim.hd[!tmprev_q], iter_key);
+	c = hash_iter(prim.hd[!tmprev_q], iter_key, gen.key->measure(iter_key));
 
 	while (lhash_next((unsigned *) key_buf, value_buf, &c))
 		if (assoc_exists(key_buf))
@@ -272,7 +236,7 @@ static inline void gen_rand() {
 
 	rand = random() % count;
 
-	c = gen.iter(prim.hd[!tmprev_q], iter_key);
+	c = hash_iter(prim.hd[!tmprev_q], iter_key, gen.key->measure(iter_key));
 
 	while (lhash_next((unsigned *) key_buf, value_buf, &c))
 		if (!assoc_exists(key_buf))
@@ -283,11 +247,11 @@ static inline void gen_rand() {
 		}
 
 	if (mode)
-		gen.value_print(key_buf);
+		gen.key->print(key_buf);
 	else {
 		u_print(key_buf);
 		putchar(' ');
-		gen.value_print(value_buf);
+		gen.key->print(value_buf);
 	}
 
 	assoc_print();
@@ -297,7 +261,7 @@ static inline void gen_rand() {
 static inline void _gen_get() {
 	u_print(key_buf);
 	putchar(' ');
-	gen.value_print(value_buf);
+	gen.key->print(value_buf);
 	assoc_print();
 	printf("\n");
 }
@@ -311,7 +275,7 @@ static void gen_get(char *str) {
 		return;
 	}
 
-	c = gen.iter(prim.hd[!tmprev_q], iter_key);
+	c = hash_iter(prim.hd[!tmprev_q], iter_key, gen.key->measure(iter_key));
 
 	while (lhash_next((unsigned *) key_buf, value_buf, &c))
 		if (assoc_exists(key_buf))
@@ -325,7 +289,7 @@ static void gen_list() {
 	gen_lookup(NULL);
 	cond = gen.cond(qhds_n, 1);
 
-	c = gen.iter(prim.hd[!tmprev_q], NULL);
+	c = hash_iter(prim.hd[!tmprev_q], NULL, gen.key->measure(NULL));
 
 	while (lhash_next((unsigned *) key_buf, value_buf, &c)) {
 		rec_query(qhds, key_buf, value_buf, !cond);
@@ -353,10 +317,10 @@ static inline void gen_list_missing() {
 		struct hash_cursor c2 = lhash_iter(qhds);
 
 		while (lhash_next(&aux, &aux_hdp, &c2))
-			if (m0_gen[tmprev_q].get(aux_hdp.hd[!tmprev_q], key_buf, value_buf)) {
+			if (hash_get(aux_hdp.hd[!tmprev_q], key_buf, value_buf, m0_gen[tmprev_q].key->measure(key_buf))) {
 				u_print(key_buf);
 				putchar(' ');
-				gen.value_print(value_buf);
+				gen.key->print(value_buf);
 				assoc_print();
 				putchar('\n');
 			}
@@ -386,6 +350,7 @@ unsigned gen_open(char *fname, unsigned mode, unsigned flags) {
 	hash_config.file = fname;
 	hash_config.mode = flags & QH_RDONLY ? 0644 : 0664;
 	hash_config.flags = flags;
+	hash_config.type = DB_BTREE;
 
 	aux_hdp.flags = flags;
 	aux_hdp.phd = lhash_init(0, "phd");
@@ -397,13 +362,14 @@ unsigned gen_open(char *fname, unsigned mode, unsigned flags) {
 	flags &= ~QH_RDONLY;
 	hash_config.mode = flags & QH_RDONLY ? 0644 : 0664;
 	hash_config.flags = flags;
+	hash_config.type = DB_HASH;
 	if (mode) {
 		aux_hdp.hd[0] = ahash_init("hd"); // needed for dupes
 		aux_hdp.hd[1] = ahash_init("rhd");
 		hash_assoc(aux_hdp.hd[0], aux_hdp.phd, assoc_hd);
 		hash_assoc(aux_hdp.hd[1], aux_hdp.phd, m1_assoc_rhd);
 	} else {
-		aux_hdp.hd[0] = hash_init("hd"); // not really needed but here for consistency
+		aux_hdp.hd[0] = qdb_init("hd", &qdb_unsigned, &qdb_string); // not really needed but here for consistency
 		aux_hdp.hd[1] = ahash_init("rhd");
 		hash_assoc(aux_hdp.hd[0], aux_hdp.phd, assoc_hd);
 		hash_assoc(aux_hdp.hd[1], aux_hdp.phd, m0_assoc_rhd);

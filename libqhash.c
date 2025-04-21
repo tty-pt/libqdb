@@ -9,9 +9,11 @@
 
 #define HASH_DBS_MAX (64 * 512)
 #define HASH_NOT_FOUND NULL
+#define QDB_LEN(hd, MEMBER, ptr) (meta[hd].MEMBER->measure ? meta[hd].MEMBER->measure(ptr) : meta[hd].MEMBER->len)
 
 enum qhash_priv_flags {
-	QH_NOT_FIRST = 1,
+	QH_NOT_FIRST = 1, // internal iteration flag
+	QH_AINDEX = 32, // auto index db (implies unsigned key)
 };
 
 struct meta {
@@ -19,6 +21,7 @@ struct meta {
 	int flags;
 	assoc_t assoc;
 	struct idm idm;
+	qdb_type_t *key, *value;
 };
 
 static DB *hash_dbs[HASH_DBS_MAX];
@@ -81,8 +84,12 @@ hash_put(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len
 	return ret;
 }
 
+int qdb_put(unsigned hd, void *key, void *value) {
+	return hash_put(hd, key, QDB_LEN(hd, key, key), value, QDB_LEN(hd, value, value));
+}
+
 unsigned
-hash_cinit(const char *file, const char *database, int mode, int flags)
+hash_cinit(const char *file, const char *database, int mode, int flags, int type, qdb_type_t *key_type, qdb_type_t *value_type)
 {
 	DB *db;
 	unsigned id, dbflags = 0;
@@ -103,6 +110,8 @@ hash_cinit(const char *file, const char *database, int mode, int flags)
 	hash_first = 0;
 	id = idm_new(&idm);
 	meta[id].flags = flags;
+	meta[id].key = key_type;
+	meta[id].value = value_type;
 
 	if (db_create(&hash_dbs[id], env, 0))
 		hashlog_err("hash_cinit: db_create");
@@ -116,7 +125,7 @@ hash_cinit(const char *file, const char *database, int mode, int flags)
 			hashlog_err("hash_cinit: set_flags");
 
 	dbflags = (env ? DB_THREAD : 0) | (flags & QH_RDONLY ? DB_RDONLY : DB_CREATE);
-	if (db->open(db, (flags & QH_TXN) ? txnid : NULL, file, database, DB_HASH, dbflags, mode))
+	if (db->open(db, (flags & QH_TXN) ? txnid : NULL, file, database, flags & DB_RDONLY ? DB_UNKNOWN : type, dbflags, mode))
 		hashlog_err("hash_cinit: open");
 
 	return id;
@@ -158,11 +167,25 @@ int hash_get(unsigned hd, void *value_r, void *key_r, size_t key_len)
 	return 0;
 }
 
+int qdb_get(unsigned hd, void *target, void *key) {
+	return hash_get(hd, target, key, QDB_LEN(hd, key, key));
+}
+
 int hash_exists(unsigned hd, void *key_r, size_t key_len)
 {
 	size_t size;
 
 	if (__hash_get(hd, &size, key_r, key_len))
+		return 1;
+
+	return 0;
+}
+
+int qdb_exists(unsigned hd, void *key)
+{
+	size_t size;
+
+	if (__hash_get(hd, &size, key, QDB_LEN(hd, key, key)))
 		return 1;
 
 	return 0;
@@ -190,6 +213,10 @@ int hash_pget(unsigned hd, void *pkey_r, void *key_r, size_t key_len) {
 
 	memcpy(pkey_r, pkey.data, pkey.size);
 	return 0;
+}
+
+int qdb_pget(unsigned hd, void *pkey, void *key) {
+	return hash_pget(hd, pkey, key, QDB_LEN(hd, key, key));
 }
 
 int
@@ -249,6 +276,10 @@ hash_vdel(unsigned hd, void *key_data, size_t key_size, void *value_data, size_t
 	return ret == DB_NOTFOUND ? 0 : ret;
 }
 
+int qdb_vdel(unsigned hd, void *key, void *value) {
+	return hash_vdel(hd, key, QDB_LEN(hd, key, key), value, QDB_LEN(hd, value, value));
+}
+
 typedef int get_t(DBC *dbc, DBT *key, DBT *pkey, DBT *data, unsigned flags);
 
 int primary_get(DBC *dbc, DBT *key __attribute__((unused)), DBT *pkey, DBT *data, unsigned flags) {
@@ -284,6 +315,10 @@ hash_iter(unsigned hd, void *key, size_t key_len) {
 	if (key)
 		cur.flags = QH_DUP;
 	return cur;
+}
+
+struct hash_cursor qdb_iter(unsigned hd, char *key) {
+	return hash_iter(hd, key, QDB_LEN(hd, key, key));
 }
 
 void hash_fin(struct hash_cursor *cur) {
@@ -379,10 +414,11 @@ unsigned idm_new(struct idm *idm) {
 }
 
 unsigned lhash_cinit(size_t item_len, const char *file, const char *database, int mode, unsigned flags) {
-	unsigned hd = hash_cinit(file, database, mode, flags), last = 0;
+	unsigned hd = hash_cinit(file, database, mode, flags, DB_HASH, &qdb_unsigned, NULL), last = 0;
 	unsigned ign;
 	char buf[item_len];
 	meta[hd].len = item_len;
+	meta[hd].flags |= QH_AINDEX;
 	SLIST_INIT(&meta[hd].idm.free);
 	struct hash_cursor c = lhash_iter(hd);
 
@@ -416,9 +452,11 @@ unsigned lhash_new(unsigned hd, void *item) {
 	return id;
 }
 
-void lhash_del(unsigned hd, unsigned ref) {
-	idm_del(&meta[hd].idm, ref);
-	uhash_del(hd, ref);
+/* delete a value from an uhash */
+void uhash_del(unsigned hd, unsigned key) {
+	if (meta[hd].flags & QH_AINDEX)
+		idm_del(&meta[hd].idm, key);
+	hash_del(hd, &key, sizeof(key));
 }
 
 int lhash_put(unsigned hd, unsigned id, void *source) {
