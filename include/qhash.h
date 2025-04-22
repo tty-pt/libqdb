@@ -80,29 +80,7 @@ typedef struct meta {
 
 extern qdb_meta_t qdb_meta[HASH_DBS_MAX];
 
-void u_print(void *value) {
-	printf("%u", * (unsigned *) value);
-}
-
-void s_print(void *value) {
-	printf("%s", (char *) value);
-}
-
-size_t s_measure(void *value) {
-	return value ? strlen(value) + 1 : 0;
-}
-
-qdb_type_t qdb_string = {
-	.print = s_print,
-	.measure = s_measure,
-}, qdb_unsigned = {
-	.print = u_print,
-	.len = sizeof(unsigned),
-}, qdb_ptr = {
-	.len = sizeof(void *),
-}, qdb_unsigned_pair = {
-	.len = sizeof(unsigned) * 2,
-};
+extern qdb_type_t qdb_string, qdb_unsigned, qdb_ptr, qdb_unsigned_pair;
 
 static struct qdb_config {
 	int mode, flags;
@@ -172,6 +150,14 @@ int qdb_exists(unsigned hd, void *key);
 int qdb_pget(unsigned hd, void *pkey, void *key);
 qdb_cur_t qdb_iter(unsigned hd, void *key);
 int qdb_cdel(qdb_cur_t *cur);
+
+static inline void qdb_key_print(unsigned hd, void *key) {
+	qdb_meta[hd].key->print(key);
+}
+
+static inline void qdb_value_print(unsigned hd, void *value) {
+	qdb_meta[hd].value->print(value);
+}
 
 /* delete a value from an hash */
 static inline void qdb_del(unsigned hd, void *key) {

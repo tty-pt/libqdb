@@ -70,21 +70,13 @@ int m1_cond(unsigned qhds_n, unsigned is_value) {
 }
 
 gen_t m1_gen[2] = {{
-	.key = &qdb_unsigned, .value = &qdb_unsigned,
-	.vdel = m1_vdel,
-	.put = m1_put, .cond = m1_cond,
+	.vdel = m1_vdel, .put = m1_put, .cond = m1_cond,
 }, {
-	.key = &qdb_unsigned, .value = &qdb_unsigned,
-	.vdel = m1_vdel,
-	.put = m1_put, .cond = m1_cond,
+	.vdel = m1_vdel, .put = m1_put, .cond = m1_cond,
 }}, m0_gen[2] = {{
-	.key = &qdb_unsigned, .value = &qdb_string,
-	.vdel = m0_vdel,
-	.put = m0_put, .cond = m0_cond,
+	.vdel = m0_vdel, .put = m0_put, .cond = m0_cond,
 }, {
-	.key = &qdb_string, .value = &qdb_unsigned,
-	.vdel = m0_vdel,
-	.put = m0_put, .cond = m0_cond,
+	.vdel = m0_vdel, .put = m0_put, .cond = m0_cond,
 }}, gen, *gen_r;
 
 void
@@ -201,12 +193,13 @@ static inline void assoc_print() {
 	qdb_cur_t c2 = qdb_iter(ahds, NULL);
 
 	while (qdb_next(&aux, &aux_hdp, &c2)) {
+		unsigned hd = aux_hdp.hd[0];
 		putchar(' ');
-		if (u_get(aux_hdp.hd[0], alt_buf, key_buf)) {
-			s_print("-1");
+		if (u_get(hd, alt_buf, key_buf)) {
+			printf("-1\n");
 			continue;
 		}
-		s_print(alt_buf);
+		qdb_value_print(hd, alt_buf);
 		if (bail) {
 			qdb_fin(&c2);
 			break;
@@ -231,8 +224,9 @@ static inline void gen_rand() {
 	}
 
 	rand = random() % count;
+	unsigned hd = prim.hd[!tmprev_q];
 
-	c = qdb_iter(prim.hd[!tmprev_q], iter_key);
+	c = qdb_iter(hd, iter_key);
 
 	while (qdb_next((unsigned *) key_buf, value_buf, &c))
 		if (!assoc_exists(key_buf))
@@ -243,21 +237,21 @@ static inline void gen_rand() {
 		}
 
 	if (mode)
-		gen.key->print(key_buf);
+		qdb_value_print(hd, key_buf);
 	else {
-		u_print(key_buf);
+		qdb_value_print(hd, key_buf);
 		putchar(' ');
-		gen.key->print(value_buf);
+		qdb_key_print(hd, value_buf);
 	}
 
 	assoc_print();
 	printf("\n");
 }
 
-static inline void _gen_get() {
-	u_print(key_buf);
+static inline void _gen_get(unsigned hd) {
+	qdb_key_print(hd, key_buf);
 	putchar(' ');
-	gen.key->print(value_buf);
+	qdb_value_print(hd, value_buf);
 	assoc_print();
 	printf("\n");
 }
@@ -271,11 +265,13 @@ static void gen_get(char *str) {
 		return;
 	}
 
-	c = qdb_iter(prim.hd[!tmprev_q], iter_key);
+	unsigned hd = prim.hd[!tmprev_q];
+
+	c = qdb_iter(hd, iter_key);
 
 	while (qdb_next((unsigned *) key_buf, value_buf, &c))
 		if (assoc_exists(key_buf))
-			_gen_get();
+			_gen_get(hd);
 }
 
 static void gen_list() {
@@ -285,11 +281,12 @@ static void gen_list() {
 	gen_lookup(NULL);
 	cond = gen.cond(qhds_n, 1);
 
-	c = qdb_iter(prim.hd[!tmprev_q], NULL);
+	unsigned hd = prim.hd[!tmprev_q];
+	c = qdb_iter(hd, NULL);
 
 	while (qdb_next((unsigned *) key_buf, value_buf, &c)) {
 		rec_query(qhds, key_buf, value_buf, !cond);
-		_gen_get();
+		_gen_get(hd);
 	}
 }
 
@@ -312,14 +309,16 @@ static inline void gen_list_missing() {
 	while (qdb_next((unsigned *) key_buf, value_buf, &c)) {
 		qdb_cur_t c2 = qdb_iter(qhds, NULL);
 
-		while (qdb_next(&aux, &aux_hdp, &c2))
-			if (qdb_get(aux_hdp.hd[!tmprev_q], key_buf, value_buf)) {
-				u_print(key_buf);
+		while (qdb_next(&aux, &aux_hdp, &c2)) {
+			unsigned hd = aux_hdp.hd[!tmprev_q];
+			if (qdb_get(hd, key_buf, value_buf)) {
+				qdb_value_print(hd, key_buf);
 				putchar(' ');
-				gen.key->print(value_buf);
+				qdb_key_print(hd, value_buf);
 				assoc_print();
 				putchar('\n');
 			}
+		}
 	}
 }
 

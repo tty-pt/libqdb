@@ -21,6 +21,30 @@ static struct idm idm;
 static int qdb_first = 1;
 DB_ENV *env = NULL;
 
+void u_print(void *value) {
+	printf("%u", * (unsigned *) value);
+}
+
+void s_print(void *value) {
+	printf("%s", (char *) value);
+}
+
+size_t s_measure(void *value) {
+	return value ? strlen(value) + 1 : 0;
+}
+
+qdb_type_t qdb_string = {
+	.print = s_print,
+	.measure = s_measure,
+}, qdb_unsigned = {
+	.print = u_print,
+	.len = sizeof(unsigned),
+}, qdb_ptr = {
+	.len = sizeof(void *),
+}, qdb_unsigned_pair = {
+	.len = sizeof(unsigned) * 2,
+};
+
 static void
 qdb_logger_stderr(int type __attribute__((unused)), const char *fmt, ...)
 {
