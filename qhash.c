@@ -1,3 +1,6 @@
+/* FIXME
+ * lookup is not working correctly
+ */
 #include "./include/qhash.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -5,6 +8,8 @@
 #include <unistd.h>
 
 DB_TXN *txnid;
+
+unsigned QH_NOT_NEW = 1;
 
 typedef void del_t(unsigned hd, void *key);
 typedef int gen_vdel_t(unsigned hd, void *key, void *value);
@@ -24,10 +29,6 @@ typedef struct {
 	gen_cond_t *cond;
 	qdb_type_t *value, *key;
 } gen_t;
-
-qdb_type_t qdb_hdpair = {
-	.len = sizeof(struct hdpair),
-};
 
 char value_buf[BUFSIZ], key_buf[BUFSIZ], *col;
 
@@ -51,7 +52,7 @@ void m0_put() {
 	if (col)
 		qdb_put(prim.phd, key_buf, value_buf);
 	else {
-		unsigned id = qdb_new(prim.phd, value_buf);
+		unsigned id = qdb_lput(prim.phd, value_buf);
 		printf("%u\n", id);
 	}
 }
@@ -100,10 +101,6 @@ usage(char *prog)
 	fprintf(stderr, "         1           associative mode (n id : n id)\n");
 }
 
-int u_get(unsigned hd, void *value, void *key) {
-	return qdb_get(aux_hdp.hd[0], value, key);
-}
-
 static inline void *rec_query(unsigned qhds, char *tbuf, char *buf, unsigned tmprev) {
 	qdb_cur_t c2 = qdb_iter(qhds, NULL);
 	unsigned aux;
@@ -130,11 +127,13 @@ inline static char *_gen_lookup(char *buf, unsigned *tmprev_r, char *str, unsign
 	unsigned cond = gen.cond(qhds_n, is_value);
 	char *ret = NULL;
 
+	/* fprintf(stderr, "_gen_lookup %u %s\n", cond, buf); */
 	if (cond)
 		strcpy(buf, str);
 	else {
 		unsigned ret = strtoul(str, NULL, 10);
 		memcpy(buf, &ret, sizeof(unsigned));
+		/* fprintf(stderr, "_gen_lookup 2 %u\n", ret); */
 	}
 
 	if (qhds_n)
@@ -195,11 +194,11 @@ static inline void assoc_print() {
 	while (qdb_next(&aux, &aux_hdp, &c2)) {
 		unsigned hd = aux_hdp.hd[0];
 		putchar(' ');
-		if (u_get(hd, alt_buf, key_buf)) {
+		if (qdb_get(hd, alt_buf, key_buf)) {
 			printf("-1\n");
 			continue;
 		}
-		qdb_value_print(hd, alt_buf);
+		qdb_print(hd, QDB_VALUE, alt_buf);
 		if (bail) {
 			qdb_fin(&c2);
 			break;
@@ -237,11 +236,11 @@ static inline void gen_rand() {
 		}
 
 	if (mode)
-		qdb_value_print(hd, key_buf);
+		qdb_print(hd, QDB_VALUE, key_buf);
 	else {
-		qdb_value_print(hd, key_buf);
+		qdb_print(hd, QDB_VALUE, key_buf);
 		putchar(' ');
-		qdb_key_print(hd, value_buf);
+		qdb_print(hd, QDB_KEY, key_buf);
 	}
 
 	assoc_print();
@@ -249,9 +248,9 @@ static inline void gen_rand() {
 }
 
 static inline void _gen_get(unsigned hd) {
-	qdb_key_print(hd, key_buf);
+	qdb_print(hd, QDB_VALUE, key_buf);
 	putchar(' ');
-	qdb_value_print(hd, value_buf);
+	qdb_print(hd, QDB_KEY, value_buf);
 	assoc_print();
 	printf("\n");
 }
@@ -269,9 +268,12 @@ static void gen_get(char *str) {
 
 	c = qdb_iter(hd, iter_key);
 
-	while (qdb_next((unsigned *) key_buf, value_buf, &c))
+	/* fprintf(stderr, "gen_get iter_key %u\n", * (unsigned *) iter_key); */
+	while (qdb_next(key_buf, value_buf, &c)) {
+		/* fprintf(stderr, "gen_get key %u %u\n", * (unsigned *) key_buf, * (unsigned *) value_buf); */
 		if (assoc_exists(key_buf))
 			_gen_get(hd);
+	}
 }
 
 static void gen_list() {
@@ -312,9 +314,9 @@ static inline void gen_list_missing() {
 		while (qdb_next(&aux, &aux_hdp, &c2)) {
 			unsigned hd = aux_hdp.hd[!tmprev_q];
 			if (qdb_get(hd, key_buf, value_buf)) {
-				qdb_value_print(hd, key_buf);
+				qdb_print(hd, QDB_VALUE, key_buf);
 				putchar(' ');
-				qdb_key_print(hd, value_buf);
+				qdb_print(hd, QDB_KEY, value_buf);
 				assoc_print();
 				putchar('\n');
 			}
@@ -323,10 +325,13 @@ static inline void gen_list_missing() {
 }
 
 void m0_assoc_rhd(void **data, uint32_t *len, void *key, void *value) {
-	*len = strlen(value) + 1;
-	*data = value;
-	if (* (unsigned *) key == (unsigned) -1)
-		*data = key;
+	if (* (unsigned *) key == (unsigned) -2) {
+		*len = 0;
+		*data = "\0";
+	} else {
+		*len = strlen(value) + 1;
+		*data = value;
+	}
 }
 
 void assoc_hd(void **data, uint32_t *len, void *key, void *value) {
@@ -345,35 +350,32 @@ unsigned gen_open(char *fname, unsigned mode, unsigned flags) {
 
 	qdb_config.file = fname;
 	qdb_config.mode = flags & QH_RDONLY ? 0644 : 0664;
-	qdb_config.flags = flags;
-	qdb_config.type = DB_BTREE;
+	qdb_config.type = DB_HASH;
 
-	aux_hdp.flags = flags;
+	aux_hdp.flags = 0;
 	aux_hdp.phd = mode
-		? qdb_init("phd", &qdb_unsigned_pair, &qdb_unsigned)
-		: qdb_linit("phd", &qdb_string);
+		? qdb_open("phd", "ul", "u", flags)
+		: qdb_open("phd", "u", "s", flags | QH_AINDEX);
 	strlcpy(aux_hdp.fname, fname, BUFSIZ);
 	if (existed) {
-		qdb_get(aux_hdp.phd, &mode, &minus_two);
-		aux_hdp.flags |= 1;
+		size_t len;
+		qdb_smeta_t *smeta = qdb_getc(aux_hdp.phd, &len, &minus_two, sizeof(minus_two));
+		mode = !strcmp(smeta->key, "ul");
+		aux_hdp.flags |= QH_NOT_NEW;
 	}
-	flags &= ~QH_RDONLY;
-	qdb_config.mode = flags & QH_RDONLY ? 0644 : 0664;
-	qdb_config.flags = flags;
-	qdb_config.type = DB_HASH;
+	qdb_config.mode = 0664;
 	if (mode) {
-		aux_hdp.hd[0] = qdb_ainit("hd"); // needed for dupes
-		aux_hdp.hd[1] = qdb_ainit("rhd");
+		aux_hdp.hd[0] = qdb_open("hd", "u", "u", QH_SEC);
+		aux_hdp.hd[1] = qdb_open("rhd", "u", "u", QH_SEC);
 		qdb_assoc(aux_hdp.hd[0], aux_hdp.phd, assoc_hd);
 		qdb_assoc(aux_hdp.hd[1], aux_hdp.phd, m1_assoc_rhd);
 	} else {
-		aux_hdp.hd[0] = qdb_init("hd", &qdb_unsigned, &qdb_string); // not really needed but here for consistency
-		aux_hdp.hd[1] = qdb_init("rhd", &qdb_string, &qdb_unsigned);
+		aux_hdp.hd[0] = qdb_open("hd", "u", "s", QH_SEC);
+		qdb_config.type = DB_BTREE;
+		aux_hdp.hd[1] = qdb_open("rhd", "s", "u", QH_SEC);
 		qdb_assoc(aux_hdp.hd[0], aux_hdp.phd, assoc_hd);
 		qdb_assoc(aux_hdp.hd[1], aux_hdp.phd, m0_assoc_rhd);
 	}
-	if (!existed)
-		qdb__put(aux_hdp.phd, &minus_two, sizeof(unsigned), &mode, sizeof(unsigned));
 	return mode;
 }
 
@@ -381,7 +383,7 @@ static inline void hdpair_close(struct hdpair *pair, unsigned nochange) {
 	qdb_close(pair->phd, 0);
 	qdb_close(pair->hd[0], 0);
 	qdb_close(pair->hd[1], 0);
-	if (!(pair->flags & 1) && nochange)
+	if (!(pair->flags & QH_NOT_NEW) && nochange)
 		unlink(pair->fname);
 }
 
@@ -397,8 +399,11 @@ main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
-	ahds = qdb_linit(NULL, &qdb_hdpair);
-	qhds = qdb_linit(NULL, &qdb_hdpair);
+	qdb_init();
+	qdb_reg("hdp", sizeof(struct hdpair));
+
+	ahds = qdb_open(NULL, "u", "hdp", QH_AINDEX);
+	qhds = qdb_open(NULL, "u", "hdp", QH_AINDEX);
 
 	gen_r = m0_gen;
 
@@ -415,12 +420,12 @@ main(int argc, char *argv[])
 			break;
 		case 'a':
 			gen_open(optarg, 0, QH_RDONLY);
-			qdb_new(ahds, &aux_hdp);
+			qdb_lput(ahds, &aux_hdp);
 			ahds_n++;
 			break;
 		case 'q':
 			gen_open(optarg, 0, QH_RDONLY);
-			qdb_new(qhds, &aux_hdp);
+			qdb_lput(qhds, &aux_hdp);
 			qhds_n++;
 			break;
 		case 'x':
@@ -428,6 +433,7 @@ main(int argc, char *argv[])
 			break;
 		case 'p':
 		case 'd':
+			/* TODO m1 can be inferred */
 			nochange = 0;
 		case 'l':
 		case 'L':
