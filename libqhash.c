@@ -15,11 +15,17 @@ enum {
 
 qdb_meta_t qdb_meta[HASH_DBS_MAX];
 static DB *qdb_dbs[HASH_DBS_MAX];
+unsigned types_hd = HASH_DBS_MAX - 1;
+
+struct qdb_config qdb_config = {
+	.mode = 0644,
+	.type = DB_HASH,
+	.file = NULL
+};
 
 static struct idm idm;
 
 static int qdb_first = 1;
-DB_ENV *env = NULL;
 
 void u_print(void *value) {
 	printf("%u", * (unsigned *) value);
@@ -41,8 +47,8 @@ qdb_type_t qdb_string = {
 	.len = sizeof(unsigned),
 }, qdb_ptr = {
 	.len = sizeof(void *),
-}, qdb_unsigned_pair = {
-	.len = sizeof(unsigned) * 2,
+}, qdb_unsigned_long = {
+	.len = sizeof(unsigned long),
 };
 
 static void
@@ -70,7 +76,7 @@ void qdb_set_logger(log_t logger) {
 }
 
 int
-qdb__put(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len) {
+qdb_putc(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len) {
 	unsigned id;
 	DB *db = qdb_dbs[hd];
 	DBT key, data;
@@ -79,8 +85,8 @@ qdb__put(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len
 	qdb_meta_t *meta = &qdb_meta[hd];
 
 	if ((meta->flags & QH_AINDEX) && (id = * (unsigned *) key_r) != (unsigned) -2) {
-		if (meta->idm.last <= id)
-			meta->idm.last = id + 1;
+		if (meta->idm.last < id)
+			meta->idm.last = id;
 
 		// this is for lhash put. It's to ensure there are free numbers in between.
 		// let's deactivate it for now because it's causing errors atm
@@ -101,61 +107,16 @@ qdb__put(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len
 	u_int32_t flags;
 
 	if (db->get_flags(db, &flags))
-		hashlog_err("qdb__put get_flags");
+		hashlog_err("qdb_putc get_flags");
 	dupes = flags & DB_DUP;
 
 	ret = db->put(db, hd && (meta->flags & QH_TXN) ? txnid : NULL, &key, &data, 0);
 	if (ret && (ret != DB_KEYEXIST || !dupes))
-		hashlog(LOG_WARNING, "qdb__put");
+		hashlog(LOG_WARNING, "qdb_putc");
 	return ret;
 }
 
-unsigned
-qdb_initc(const char *file, const char *database, int mode, unsigned flags, int type, qdb_type_t *key_type, qdb_type_t *value_type)
-{
-	DB *db;
-	unsigned id, dbflags = 0;
-
-	if (qdb_first) {
-		idm = idm_init();
-		idm_new(&idm);
-
-		if (db_create(&qdb_dbs[0], NULL, 0))
-			hashlog_err("qdb_initc: db_create ids_db");
-
-		if (qdb_dbs[0]->open(qdb_dbs[0], NULL, NULL, NULL, DB_HASH, DB_CREATE, 644))
-			hashlog_err("qdb_initc: open ids_db");
-
-		memset(qdb_meta, 0, sizeof(qdb_meta));
-		qdb_meta[0].key = &qdb_ptr;
-		qdb_meta[0].value = &qdb_unsigned;
-	}
-
-	qdb_first = 0;
-	id = idm_new(&idm);
-	qdb_meta[id].flags = flags;
-	qdb_meta[id].key = key_type;
-	qdb_meta[id].value = value_type;
-
-	if (db_create(&qdb_dbs[id], env, 0))
-		hashlog_err("qdb_initc: db_create");
-
-	// this is needed for associations
-	db = qdb_dbs[id];
-	qdb_put(0, &qdb_dbs[id], &id);
-
-	if (flags & QH_DUP)
-		if (db->set_flags(db, DB_DUP))
-			hashlog_err("qdb_initc: set_flags");
-
-	dbflags = (env ? DB_THREAD : 0) | (flags & QH_RDONLY ? DB_RDONLY : DB_CREATE);
-	if (db->open(db, (flags & QH_TXN) ? txnid : NULL, file, database, type, dbflags, mode))
-		hashlog_err("qdb_initc: open");
-
-	return id;
-}
-
-void * __qdb_get(unsigned hd, size_t *size, void *key_r)
+void *qdb_getc(unsigned hd, size_t *size, void *key_r, size_t key_len)
 {
 	DB *db = qdb_dbs[hd];
 	DBT key, data;
@@ -167,7 +128,7 @@ void * __qdb_get(unsigned hd, size_t *size, void *key_r)
 	memset(&data, 0, sizeof(data));
 
 	key.data = (void *) key_r;
-	key.size = meta->key->len ? meta->key->len : meta->key->measure(key_r);
+	key.size = key_len;
 	data.flags = DB_DBT_MALLOC;
 
 	ret = db->get(db, hd && (meta->flags & QH_TXN) ? txnid : NULL, &key, &data, 0);
@@ -181,26 +142,122 @@ void * __qdb_get(unsigned hd, size_t *size, void *key_r)
 	return data.data;
 }
 
-int qdb_get(unsigned hd, void *value, void *key)
-{
-	size_t size;
-	void *value_r = __qdb_get(hd, &size, key);
+unsigned _qdb_lopenc(unsigned hd, qdb_type_t *value_type) {
+	unsigned ign, last = 0;
+	qdb_meta_t *meta = &qdb_meta[hd];
+	char buf[value_type->len];
+	SLIST_INIT(&meta->idm.free);
+	qdb_cur_t c = qdb_iter(hd, NULL);
 
-	if (!value_r)
-		return 1;
+	while (qdb_next(&ign, buf, &c)) if (ign >= last)
+		last = ign + 1;
 
-	memcpy(value, value_r, size);
-	return 0;
+	meta->idm.last = last;
+	for (last = 0; last < meta->idm.last; last++)
+		if (!qdb_existsc(hd, &last, sizeof(last)))
+			idml_push(&meta->idm.free, last);
+
+	return hd;
 }
 
-int qdb_exists(unsigned hd, void *key_r)
+void
+qdb_init(void) {
+	idm = idm_init();
+	idm_new(&idm);
+
+	if (db_create(&qdb_dbs[0], NULL, 0))
+		hashlog_err("qdb_init: db_create ids_db");
+
+	if (qdb_dbs[0]->open(qdb_dbs[0], NULL, NULL, NULL, DB_HASH, DB_CREATE, 644))
+		hashlog_err("qdb_init: open ids_db");
+
+	memset(qdb_meta, 0, sizeof(qdb_meta));
+	qdb_meta[0].type[QDB_KEY] = &qdb_ptr;
+	qdb_meta[0].type[QDB_VALUE] = &qdb_unsigned;
+
+	if (db_create(&qdb_dbs[types_hd], NULL, 0))
+		hashlog_err("qdb_init: db_create types");
+
+	if (qdb_dbs[types_hd]->open(qdb_dbs[types_hd], NULL, NULL, NULL, DB_HASH, DB_CREATE, 644))
+		hashlog_err("qdb_init: open types");
+
+	qdb_meta[types_hd].type[QDB_KEY] = &qdb_string;
+	qdb_meta[types_hd].type[QDB_VALUE] = &qdb_ptr;
+	qdb_regc("s", &qdb_string);
+	qdb_regc("u", &qdb_unsigned);
+	qdb_reg("p", sizeof(void *));
+	qdb_reg("ul", sizeof(unsigned long));
+}
+
+unsigned
+qdb_openc(const char *file, const char *database, int mode, unsigned flags, int type, char *key_tid, char *value_tid)
 {
-	size_t size;
+	DB *db;
+	unsigned id, dbflags = 0;
+	qdb_type_t *key_type = NULL, *value_type = NULL;
 
-	if (__qdb_get(hd, &size, key_r))
-		return 1;
+	if (qdb_get(types_hd, &key_type, key_tid))
+		hashlog_err("qdb_open: key type was not registered");
 
-	return 0;
+	if (qdb_get(types_hd, &value_type, value_tid))
+		hashlog_err("qdb_open: value type was not registered");
+
+	qdb_first = 0;
+	id = idm_new(&idm);
+
+	if (db_create(&qdb_dbs[id], qdb_config.env, 0))
+		hashlog_err("qdb_openc: db_create");
+
+	// this is needed for associations
+	db = qdb_dbs[id];
+	qdb_put(0, &qdb_dbs[id], &id);
+
+	if (flags & QH_DUP)
+		if (db->set_flags(db, DB_DUP))
+			hashlog_err("qdb_openc: set_flags");
+
+	dbflags = (qdb_config.env ? DB_THREAD : 0) | (flags & QH_RDONLY ? DB_RDONLY : DB_CREATE);
+	if (db->open(db, (flags & QH_TXN) ? txnid : NULL, file, database, type, dbflags, mode))
+		hashlog_err("qdb_openc: open");
+
+	if (flags & QH_SEC)
+		goto out;
+
+	size_t val_len;
+	unsigned minus_two = (unsigned) -2;
+	qdb_smeta_t *smeta = 
+		qdb_getc(id, &val_len, &minus_two, sizeof(minus_two));
+
+	if (smeta) {
+		qdb_get(types_hd, &key_type, smeta->key);
+		qdb_get(types_hd, &value_type, smeta->value);
+		qdb_meta[id].type[QDB_KEY] = key_type;
+		qdb_meta[id].type[QDB_VALUE] = value_type;
+		flags |= smeta->flags;
+	} else {
+		qdb_smeta_t put_smeta = {
+			.flags = flags,
+			.extra = 0,
+		};
+
+		strcpy(put_smeta.key, key_tid);
+		strcpy(put_smeta.value, value_tid);
+
+		qdb_putc(id, &minus_two, sizeof(minus_two),
+				&put_smeta, sizeof(put_smeta));
+	}
+
+	if (flags & QH_AINDEX)
+		_qdb_lopenc(id, value_type);
+
+out:
+	qdb_meta[id].flags = flags;
+	qdb_meta[id].type[QDB_KEY] = key_type;
+	qdb_meta[id].type[QDB_VALUE] = value_type;
+
+	/* fprintf(stderr, "open %u %s %s %u %p %lu %u\n", id, file, database, flags, (void *) smeta, key_type->len, qdb_meta[id].idm.last); */
+
+	return id;
 }
 
 int qdb_pget(unsigned hd, void *pkey_r, void *key_r) {
@@ -212,10 +269,8 @@ int qdb_pget(unsigned hd, void *pkey_r, void *key_r) {
 	memset(&pkey, 0, sizeof(pkey));
 	memset(&data, 0, sizeof(data));
 
-	qdb_meta_t *meta = &qdb_meta[hd];
-
 	key.data = (void *) key_r;
-	key.size = meta->key->len ? meta->key->len : meta->key->measure(key_r);
+	key.size = qdb_len(hd, QDB_KEY, key_r);
 	pkey.flags = data.flags = DB_DBT_MALLOC;
 
 	ret = db->pget(db, (qdb_meta[hd].flags & QH_TXN) ? txnid : NULL, &key, &pkey, &data, 0);
@@ -269,13 +324,12 @@ qdb_rem(unsigned hd, void *key_data, void *value_data)
 
 	memset(&key, 0, sizeof(DBT));
 	key.data = key_data;
-	key.size = meta->key->len ? meta->key->len : meta->key->measure(key_data);
+	key.size = qdb_len(hd, QDB_KEY, key_data);
 	memset(&data, 0, sizeof(DBT));
 	data.flags = DB_DBT_MALLOC;
 	data.data = value_data;
-	size_t supposed_size = data.size = meta->value->len
-		? meta->value->len
-		: meta->value->measure(value_data);
+	size_t supposed_size = data.size
+		= qdb_len(hd, QDB_VALUE, value_data);
 
 	while (!(ret = cursor->get(cursor, &key, &data, flags))) {
 		flags = DB_NEXT_DUP;
@@ -318,7 +372,8 @@ qdb_iter(unsigned hd, void *key) {
 	memset(&internal->data, 0, sizeof(DBT));
 	internal->pkey.data = internal->key.data = key;
 	internal->key.flags = internal->pkey.flags = internal->data.flags = DB_DBT_MALLOC;
-	internal->pkey.size = internal->key.size = meta->key->len ? meta->key->len : meta->key->measure(key);
+	internal->pkey.size = internal->key.size
+		= key ? qdb_len(hd, QDB_KEY, key) : 0;
 	internal->get = (meta->flags & QH_SEC)
 		? internal->cursor->pget
 		: primary_get;
@@ -438,43 +493,5 @@ unsigned idm_new(struct idm *idm) {
 	if (ret == (unsigned) -1)
 		return idm->last++;
 
-	return ret;
-}
-
-unsigned qdb_linitc(const char *file, const char *database, int mode, unsigned flags, qdb_type_t *value_type) {
-	unsigned hd = qdb_initc(file, database, mode, flags | QH_AINDEX, DB_HASH, &qdb_unsigned, value_type), last = 0;
-	unsigned ign;
-	qdb_meta_t *meta = &qdb_meta[hd];
-	char buf[value_type->len];
-	SLIST_INIT(&meta->idm.free);
-	qdb_cur_t c = qdb_iter(hd, NULL);
-
-	while (qdb_next(&ign, buf, &c)) if (ign >= last)
-		last = ign + 1;
-
-	meta->idm.last = last;
-	for (last = 0; last < meta->idm.last; last++) {
-		size_t size;
-		void *value = __qdb_get(hd, &size, &last);
-		if (!value)
-			idml_push(&meta->idm.free, last);
-	}
-
-	return hd;
-}
-
-unsigned qdb_new(unsigned hd, void *item) {
-	unsigned id = idm_new(&qdb_meta[hd].idm);
-	qdb_put(hd, &id, item);
-	return id;
-}
-
-void qdb_env_set(void *value) {
-	env = (DB_ENV *) value;
-}
-
-void *qdb_env_pop(void) {
-	DB_ENV *ret = env;
-	env = NULL;
 	return ret;
 }
