@@ -1,11 +1,10 @@
 #include "./include/qhash.h"
-#include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 #include <string.h>
 #include <sys/queue.h>
-#include <syslog.h>
 
 #define HASH_NOT_FOUND NULL
 
@@ -20,7 +19,9 @@ unsigned types_hd = HASH_DBS_MAX - 1;
 struct qdb_config qdb_config = {
 	.mode = 0644,
 	.type = DB_HASH,
-	.file = NULL
+	.file = NULL,
+	.env = NULL,
+	.txnid = NULL,
 };
 
 static struct idm idm;
@@ -60,19 +61,10 @@ qdb_logger_stderr(int type __attribute__((unused)), const char *fmt, ...)
 	va_end(va);
 }
 
-log_t hashlog = qdb_logger_stderr;
-
-static inline void hashlog_perror(char *str) {
-        hashlog(LOG_ERR, "%s: %s", str, strerror(errno));
-}
-
-static inline void hashlog_err(char *str) {
-        hashlog_perror(str);
-        exit(EXIT_FAILURE);
-}
+log_t qdblog = qdb_logger_stderr;
 
 void qdb_set_logger(log_t logger) {
-	hashlog = logger;
+	qdblog = logger;
 }
 
 int
@@ -107,12 +99,12 @@ qdb_putc(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len
 	u_int32_t flags;
 
 	if (db->get_flags(db, &flags))
-		hashlog_err("qdb_putc get_flags");
+		qdblog_err("qdb_putc get_flags");
 	dupes = flags & DB_DUP;
 
-	ret = db->put(db, hd && (meta->flags & QH_TXN) ? txnid : NULL, &key, &data, 0);
+	ret = db->put(db, hd && (meta->flags & QH_TXN) ? qdb_config.txnid : NULL, &key, &data, 0);
 	if (ret && (ret != DB_KEYEXIST || !dupes))
-		hashlog(LOG_WARNING, "qdb_putc");
+		qdblog(LOG_WARNING, "qdb_putc");
 	return ret;
 }
 
@@ -131,12 +123,12 @@ void *qdb_getc(unsigned hd, size_t *size, void *key_r, size_t key_len)
 	key.size = key_len;
 	data.flags = DB_DBT_MALLOC;
 
-	ret = db->get(db, hd && (meta->flags & QH_TXN) ? txnid : NULL, &key, &data, 0);
+	ret = db->get(db, hd && (meta->flags & QH_TXN) ? qdb_config.txnid : NULL, &key, &data, 0);
 
 	if (ret == DB_NOTFOUND)
 		return NULL;
 	else if (ret)
-		hashlog_err("__qdb_get");
+		qdblog_err("__qdb_get");
 
 	*size = data.size;
 	return data.data;
@@ -147,6 +139,8 @@ unsigned _qdb_lopenc(unsigned hd, qdb_type_t *value_type) {
 	qdb_meta_t *meta = &qdb_meta[hd];
 	char buf[value_type->len];
 	SLIST_INIT(&meta->idm.free);
+	DB_TXN *txn = qdb_config.txnid;
+	qdb_config.txnid = NULL;
 	qdb_cur_t c = qdb_iter(hd, NULL);
 
 	while (qdb_next(&ign, buf, &c)) if (ign >= last)
@@ -157,6 +151,8 @@ unsigned _qdb_lopenc(unsigned hd, qdb_type_t *value_type) {
 		if (!qdb_existsc(hd, &last, sizeof(last)))
 			idml_push(&meta->idm.free, last);
 
+	qdb_config.txnid = txn;
+
 	return hd;
 }
 
@@ -166,20 +162,20 @@ qdb_init(void) {
 	idm_new(&idm);
 
 	if (db_create(&qdb_dbs[0], NULL, 0))
-		hashlog_err("qdb_init: db_create ids_db");
+		qdblog_err("qdb_init: db_create ids_db");
 
 	if (qdb_dbs[0]->open(qdb_dbs[0], NULL, NULL, NULL, DB_HASH, DB_CREATE, 644))
-		hashlog_err("qdb_init: open ids_db");
+		qdblog_err("qdb_init: open ids_db");
 
 	memset(qdb_meta, 0, sizeof(qdb_meta));
 	qdb_meta[0].type[QDB_KEY] = &qdb_ptr;
 	qdb_meta[0].type[QDB_VALUE] = &qdb_unsigned;
 
 	if (db_create(&qdb_dbs[types_hd], NULL, 0))
-		hashlog_err("qdb_init: db_create types");
+		qdblog_err("qdb_init: db_create types");
 
 	if (qdb_dbs[types_hd]->open(qdb_dbs[types_hd], NULL, NULL, NULL, DB_HASH, DB_CREATE, 644))
-		hashlog_err("qdb_init: open types");
+		qdblog_err("qdb_init: open types");
 
 	qdb_meta[types_hd].type[QDB_KEY] = &qdb_string;
 	qdb_meta[types_hd].type[QDB_VALUE] = &qdb_ptr;
@@ -187,6 +183,10 @@ qdb_init(void) {
 	qdb_regc("u", &qdb_unsigned);
 	qdb_reg("p", sizeof(void *));
 	qdb_reg("ul", sizeof(unsigned long));
+	qdb_config.mode = 0644;
+	qdb_config.type = DB_HASH;
+	qdb_config.file = NULL;
+	qdb_config.flags = 0;
 }
 
 unsigned
@@ -194,19 +194,21 @@ qdb_openc(const char *file, const char *database, int mode, unsigned flags, int 
 {
 	DB *db;
 	unsigned id, dbflags = 0;
+	DB_TXN *txn = NULL; // local transaction just for open
+
 	qdb_type_t *key_type = NULL, *value_type = NULL;
 
 	if (qdb_get(types_hd, &key_type, key_tid))
-		hashlog_err("qdb_open: key type was not registered");
+		qdblog_err("qdb_open: key type was not registered");
 
 	if (qdb_get(types_hd, &value_type, value_tid))
-		hashlog_err("qdb_open: value type was not registered");
+		qdblog_err("qdb_open: value type was not registered");
 
 	qdb_first = 0;
 	id = idm_new(&idm);
 
 	if (db_create(&qdb_dbs[id], qdb_config.env, 0))
-		hashlog_err("qdb_openc: db_create");
+		qdblog_err("qdb_openc: db_create");
 
 	// this is needed for associations
 	db = qdb_dbs[id];
@@ -214,11 +216,17 @@ qdb_openc(const char *file, const char *database, int mode, unsigned flags, int 
 
 	if (flags & QH_DUP)
 		if (db->set_flags(db, DB_DUP))
-			hashlog_err("qdb_openc: set_flags");
+			qdblog_err("qdb_openc: set_flags");
+
+	if (flags & QH_TXN)
+		qdb_config.env->txn_begin(qdb_config.env, qdb_config.txnid, &txn, 0);
 
 	dbflags = (qdb_config.env ? DB_THREAD : 0) | (flags & QH_RDONLY ? DB_RDONLY : DB_CREATE);
-	if (db->open(db, (flags & QH_TXN) ? txnid : NULL, file, database, type, dbflags, mode))
-		hashlog_err("qdb_openc: open");
+	if (db->open(db, txn, file, database, type, dbflags, mode))
+		qdblog_err("qdb_openc: open");
+
+	if (flags & QH_TXN)
+		txn->commit(txn, 0);
 
 	if (flags & QH_SEC)
 		goto out;
@@ -255,7 +263,15 @@ out:
 	qdb_meta[id].type[QDB_KEY] = key_type;
 	qdb_meta[id].type[QDB_VALUE] = value_type;
 
-	/* fprintf(stderr, "open %u %s %s %u %p %lu %u\n", id, file, database, flags, (void *) smeta, key_type->len, qdb_meta[id].idm.last); */
+#if 0
+	fprintf(stderr, "open %u %s %s "
+			"%u %p %s %s %p %p\n",
+			id, file, database,
+			flags,
+			(void *) &qdb_meta[id],
+			key_tid, value_tid,
+			(void *) key_type, (void *) value_type);
+#endif
 
 	return id;
 }
@@ -273,12 +289,12 @@ int qdb_pget(unsigned hd, void *pkey_r, void *key_r) {
 	key.size = qdb_len(hd, QDB_KEY, key_r);
 	pkey.flags = data.flags = DB_DBT_MALLOC;
 
-	ret = db->pget(db, (qdb_meta[hd].flags & QH_TXN) ? txnid : NULL, &key, &pkey, &data, 0);
+	ret = db->pget(db, (qdb_meta[hd].flags & QH_TXN) ? qdb_config.txnid : NULL, &key, &pkey, &data, 0);
 
 	if (ret == DB_NOTFOUND)
 		return 1;
 	else if (ret)
-		hashlog_err("qdb_pget");
+		qdblog_err("qdb_pget");
 
 	memcpy(pkey_r, pkey.data, pkey.size);
 	return 0;
@@ -303,8 +319,8 @@ qdb_assoc(unsigned hd, unsigned link, qdb_assoc_t cb)
 	qdb_meta[hd].assoc = cb;
 	qdb_meta[hd].flags |= QH_SEC;
 
-	if (ldb->associate(ldb, (qdb_meta[hd].flags & QH_TXN) ? txnid : NULL, db, map_assoc, DB_CREATE | DB_IMMUTABLE_KEY))
-		hashlog_err("qdb_assoc");
+	if (ldb->associate(ldb, (qdb_meta[hd].flags & QH_TXN) ? qdb_config.txnid : NULL, db, map_assoc, DB_CREATE | DB_IMMUTABLE_KEY))
+		qdblog_err("qdb_assoc");
 }
 
 int
@@ -317,8 +333,8 @@ qdb_rem(unsigned hd, void *key_data, void *value_data)
 
 	qdb_meta_t *meta = &qdb_meta[hd];
 
-	if ((ret = db->cursor(db, hd && (meta->flags & QH_TXN) ? txnid : NULL, &cursor, 0)) != 0) {
-		hashlog(LOG_ERR, "cursor: %s", db_strerror(ret));
+	if ((ret = db->cursor(db, hd && (meta->flags & QH_TXN) ? qdb_config.txnid : NULL, &cursor, 0)) != 0) {
+		qdblog(LOG_ERR, "cursor: %s", db_strerror(ret));
 		return ret;
 	}
 
@@ -366,7 +382,7 @@ qdb_iter(unsigned hd, void *key) {
 	internal->hd = hd;
 	internal->cursor = NULL;
 	qdb_meta_t *meta = &qdb_meta[hd];
-	db->cursor(db, hd && (meta->flags & QH_TXN) ? txnid : NULL, &internal->cursor, 0);
+	db->cursor(db, hd && (meta->flags & QH_TXN) ? qdb_config.txnid : NULL, &internal->cursor, 0);
 	memset(&internal->pkey, 0, sizeof(DBT));
 	memset(&internal->key, 0, sizeof(DBT));
 	memset(&internal->data, 0, sizeof(DBT));
@@ -408,7 +424,7 @@ _qdb_next(void *key, void *value, qdb_cur_t *cur)
 
 	if ((ret = internal->get(internal->cursor, &internal->key, &internal->pkey, &internal->data, flags))) {
 		if (ret != DB_NOTFOUND)
-			hashlog(LOG_ERR, "qdb_next: %u %d %s", internal->hd, cur->flags, db_strerror(ret));
+			qdblog(LOG_ERR, "qdb_next: %u %d %s", internal->hd, cur->flags, db_strerror(ret));
 		internal->cursor->close(internal->cursor);
 		free(internal);
 		cur->internal = NULL;
@@ -456,8 +472,8 @@ int qdb_drop(unsigned hd) {
 	DBC *cursor;
 	int ret, flags = DB_FIRST;
 
-	if ((ret = db->cursor(db, (qdb_meta[hd].flags & QH_TXN) ? txnid : NULL, &cursor, 0)) != 0) {
-		hashlog(LOG_ERR, "qdb_drop: cursor: %s\n", db_strerror(ret));
+	if ((ret = db->cursor(db, (qdb_meta[hd].flags & QH_TXN) ? qdb_config.txnid : NULL, &cursor, 0)) != 0) {
+		qdblog(LOG_ERR, "qdb_drop: cursor: %s\n", db_strerror(ret));
 		return ret;
 	}
 
@@ -494,4 +510,13 @@ unsigned idm_new(struct idm *idm) {
 		return idm->last++;
 
 	return ret;
+}
+
+void qdb_env_open(DB_ENV *env, char *path) {
+	struct stat st;
+	if (stat(path, &st) != 0)
+		mkdir(path, 0755);
+
+	env->open(env, path, DB_CREATE | DB_RECOVER | DB_INIT_MPOOL | DB_INIT_TXN | DB_INIT_LOCK | DB_INIT_LOG | DB_THREAD, 0);
+	qdb_config.env = env;
 }

@@ -7,14 +7,8 @@
 #include <time.h>
 #include <unistd.h>
 
-DB_TXN *txnid;
-
 unsigned QH_NOT_NEW = 1;
 
-typedef void del_t(unsigned hd, void *key);
-typedef int gen_vdel_t(unsigned hd, void *key, void *value);
-typedef void print_t(void *value);
-typedef size_t measure_t(void *value);
 typedef void gen_put_t(void *key, void *value);
 typedef int gen_cond_t(unsigned qhds_n, unsigned is_value);
 
@@ -24,10 +18,8 @@ struct hdpair {
 } aux_hdp, prim;
 
 typedef struct {
-	gen_vdel_t *vdel;
 	gen_put_t *put;
 	gen_cond_t *cond;
-	qdb_type_t *value, *key;
 } gen_t;
 
 char value_buf[BUFSIZ], key_buf[BUFSIZ], *col;
@@ -35,18 +27,6 @@ char value_buf[BUFSIZ], key_buf[BUFSIZ], *col;
 unsigned qhds, ahds, qhds_n = 0, ahds_n = 0;
 
 unsigned mode = 0, reverse = 0, tmprev_q, tmprev_a, bail = 0;
-
-int m0_vdel(unsigned hd, void *key, void *value) {
-	return 1;
-}
-
-int m1_vdel(unsigned hd, void *key, void *value) {
-	if (!col)
-		return 1;
-
-	qdb_rem(hd, key, value);
-	return 0;
-}
 
 void m0_put() {
 	if (col)
@@ -70,15 +50,11 @@ int m1_cond(unsigned qhds_n, unsigned is_value) {
 	return qhds_n & 1;
 }
 
-gen_t m1_gen[2] = {{
-	.vdel = m1_vdel, .put = m1_put, .cond = m1_cond,
+gen_t m_gen[2] = {{
+	.put = m0_put, .cond = m0_cond,
 }, {
-	.vdel = m1_vdel, .put = m1_put, .cond = m1_cond,
-}}, m0_gen[2] = {{
-	.vdel = m0_vdel, .put = m0_put, .cond = m0_cond,
-}, {
-	.vdel = m0_vdel, .put = m0_put, .cond = m0_cond,
-}}, gen, *gen_r;
+	.put = m1_put, .cond = m1_cond,
+}}, gen;
 
 void
 usage(char *prog)
@@ -108,13 +84,10 @@ static inline void *rec_query(unsigned qhds, char *tbuf, char *buf, unsigned tmp
 
 	while (qdb_next(&aux, &aux_hdp, &c2)) {
 		tmprev = !tmprev;
-		/* fprintf(stderr, "req_query %u %u %u %u %s", qhds, tmprev, aux_hdp.hd[tmprev], * (unsigned *) buf, buf); */
-		if (qdb_get(aux_hdp.hd[tmprev], tbuf, buf)) {
-			/* fprintf(stderr, "?\n"); */
+		if (qdb_pget(aux_hdp.hd[tmprev], tbuf, buf)) {
 			qdb_fin(&c2);
 			return NULL;
 		}
-		/* fprintf(stderr, "!\n"); */
 		aux2 = buf;
 		buf = tbuf;
 		tbuf = aux2;
@@ -150,12 +123,8 @@ static char *gen_lookup(char *str) {
 
 	tmprev_q = tmprev_a = reverse;
 
-	if (!str) {
-		gen = gen_r[tmprev_q];
+	if (!str)
 		return NULL;
-	}
-
-	gen = gen_r[reverse];
 
 	col = strchr(str, ':');
 	if (col) {
@@ -166,15 +135,17 @@ static char *gen_lookup(char *str) {
 	}
 
 	ret = _gen_lookup(other_buf, &tmprev_q, str, qhds, qhds_n, other_buf == value_buf);
-	gen = gen_r[tmprev_q];
 	return ret;
 }
 
 static inline void gen_del() {
 	char *iter_key = gen_lookup(optarg);
+	unsigned hd = prim.hd[!tmprev_q];
 
-	if (gen.vdel(prim.hd[!tmprev_q], value_buf, key_buf))
+	if (!col)
 		qdb_del(prim.hd[!tmprev_q], value_buf);
+	else
+		qdb_rem(prim.hd[tmprev_q], key_buf, value_buf);
 }
 
 static inline int assoc_exists(char *key_buf) {
@@ -328,10 +299,11 @@ void m0_assoc_rhd(void **data, uint32_t *len, void *key, void *value) {
 	if (* (unsigned *) key == (unsigned) -2) {
 		*len = 0;
 		*data = "\0";
-	} else {
-		*len = strlen(value) + 1;
-		*data = value;
+		return;
 	}
+
+	*len = strlen(value) + 1;
+	*data = value;
 }
 
 void assoc_hd(void **data, uint32_t *len, void *key, void *value) {
@@ -340,6 +312,12 @@ void assoc_hd(void **data, uint32_t *len, void *key, void *value) {
 }
 
 void m1_assoc_rhd(void **data, uint32_t *len, void *key, void *value) {
+	if (* (unsigned *) key == (unsigned) -2) {
+		*len = 0;
+		*data = "\0";
+		return;
+	}
+
 	*len = sizeof(unsigned);
 	*data = ((unsigned *) value);
 }
@@ -363,16 +341,15 @@ unsigned gen_open(char *fname, unsigned mode, unsigned flags) {
 		mode = !strcmp(smeta->key, "ul");
 		aux_hdp.flags |= QH_NOT_NEW;
 	}
-	qdb_config.mode = 0664;
 	if (mode) {
-		aux_hdp.hd[0] = qdb_open("hd", "u", "u", QH_SEC);
-		aux_hdp.hd[1] = qdb_open("rhd", "u", "u", QH_SEC);
+		aux_hdp.hd[0] = qdb_open("hd", "u", "u", QH_SEC | QH_DUP);
+		aux_hdp.hd[1] = qdb_open("rhd", "u", "u", QH_SEC | QH_DUP);
 		qdb_assoc(aux_hdp.hd[0], aux_hdp.phd, assoc_hd);
 		qdb_assoc(aux_hdp.hd[1], aux_hdp.phd, m1_assoc_rhd);
 	} else {
 		aux_hdp.hd[0] = qdb_open("hd", "u", "s", QH_SEC);
 		qdb_config.type = DB_BTREE;
-		aux_hdp.hd[1] = qdb_open("rhd", "s", "u", QH_SEC);
+		aux_hdp.hd[1] = qdb_open("rhd", "s", "u", QH_SEC | QH_DUP);
 		qdb_assoc(aux_hdp.hd[0], aux_hdp.phd, assoc_hd);
 		qdb_assoc(aux_hdp.hd[1], aux_hdp.phd, m0_assoc_rhd);
 	}
@@ -405,14 +382,12 @@ main(int argc, char *argv[])
 	ahds = qdb_open(NULL, "u", "hdp", QH_AINDEX);
 	qhds = qdb_open(NULL, "u", "hdp", QH_AINDEX);
 
-	gen_r = m0_gen;
-
 	while ((ch = getopt(argc, argv, optstr)) != -1)
 		switch (ch) {
 		case 'm':
 			switch (mode = strtoul(optarg, NULL, 10)) {
-				case 0: break;
-				case 1: gen_r = m1_gen; break;
+				case 0:
+				case 1: break;
 				default:
 					fprintf(stderr, "Invalid mode\n");
 					return EXIT_FAILURE;
@@ -445,8 +420,8 @@ main(int argc, char *argv[])
 		}
 
 	optind = 1;
-	if ((mode = gen_open(fname, mode, nochange ? QH_RDONLY : 0)))
-		gen_r = m1_gen;
+	mode = gen_open(fname, mode, nochange ? QH_RDONLY : 0);
+	gen = m_gen[mode];
 	prim = aux_hdp;
 	srandom(time(NULL));
 
