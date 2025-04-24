@@ -1,19 +1,19 @@
 #ifndef QHASH_H
 #define QHASH_H
 
+#include <errno.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/queue.h>
 #include <sys/types.h>
+#include <syslog.h>
 #ifdef __OpenBSD__
 #include <db4/db.h>
 #else
 #include <db.h>
 #endif
-
-extern DB_TXN *txnid;
 
 #define FILO(name, TYPE) \
 	struct name ## _item { \
@@ -108,12 +108,23 @@ struct qdb_config {
 	DBTYPE type;
 	char *file;
 	DB_ENV *env;
+	DB_TXN *txnid;
 };
 extern struct qdb_config qdb_config;
 
 /* this is useful for custom logging */
 typedef void (*log_t)(int type, const char *fmt, ...);
 void qdb_set_logger(log_t logger);
+extern log_t qdblog;
+
+static inline void qdblog_perror(char *str) {
+        qdblog(LOG_ERR, "%s: %s", str, strerror(errno));
+}
+
+static inline void qdblog_err(char *str) {
+        qdblog_perror(str);
+        exit(EXIT_FAILURE);
+}
 
 /* initialize an id management unit */
 static inline struct idm idm_init(void) {
@@ -279,12 +290,70 @@ qdb_reg(char *key, size_t len) {
 	type->measure = NULL;
 	type->print = NULL;
 	type->len = len;
-	qdb_put(types_hd, key, type);
+	qdb_put(types_hd, key, &type);
 }
 
 /* print a key or value */
 static inline void qdb_print(unsigned hd, unsigned type, void *thing) {
 	qdb_meta[hd].type[type]->print(thing);
+}
+
+/* TRANSACTIONS */
+
+/* create a database environment */
+static inline DB_ENV *qdb_env_create(void) {
+	DB_ENV *env;
+	db_env_create(&env, 0);
+	env->set_flags(env, DB_AUTO_COMMIT, 1);
+	env->set_lk_detect(env, DB_LOCK_OLDEST);
+	env->set_tx_max(env, 5 * 60);
+	return env;
+}
+
+/* open a database environment */
+void qdb_env_open(DB_ENV *env, char *path);
+
+/* begin a transaction */
+static inline DB_TXN *qdb_begin(void) {
+	DB_TXN *txn;
+	if (qdb_config.env->txn_begin(qdb_config.env, NULL, &txn, 0)) {
+		qdblog(LOG_ERR, "Txn begin failed\n");
+		return NULL;
+	}
+
+	return txn;
+}
+
+/* commit a transation */
+static inline void qdb_commit(DB_TXN *txnid) {
+	if (!txnid) {
+		txnid = qdb_config.txnid;
+		qdb_config.txnid = NULL;
+	}
+
+	if (!txnid) {
+		qdblog(LOG_ERR, "No txn to commit\n");
+		return;
+	}
+
+	if (txnid->commit(txnid, 0))
+		qdblog(LOG_ERR, "Txn commit failed\n");
+}
+
+/* abort a transation */
+static inline void qdb_abort(DB_TXN *txnid) {
+	if (!txnid) {
+		txnid = qdb_config.txnid;
+		qdb_config.txnid = NULL;
+	}
+
+	if (txnid->abort(txnid))
+		qdblog(LOG_ERR, "Txn abort failed\n");
+}
+
+/* abort a transation */
+static inline void qdb_checkpoint(unsigned kbytes, unsigned min, unsigned flags) {
+	qdb_config.env->txn_checkpoint(qdb_config.env, kbytes, min, flags);
 }
 
 #endif

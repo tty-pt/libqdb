@@ -206,6 +206,47 @@ This is how you configure how logging is made.
 It defaults to printing to stderr,
 but you might as well use syslog for example.
 
+# Environments and transactions (Rarer)
+## qdb\_env\_create
+```c
+DB_ENV *qdb_env_create(void);
+```
+> Create a database environment,
+and set it to some good defaults.
+
+## qdb\_env\_open
+```c
+void *qdb_env_open(DB_ENV *env, char *dir);
+```
+> Open it and all ops will use it by default
+
+## qdb\_begin
+```c
+DB_TXN *qdb_begin(void);
+qdb_config.txnid = qdb_begin(); // often good
+```
+> Begin a transaction
+
+## qdb\_commit
+```c
+void qdb_commit(DB_TXN *txn);
+```
+> Commit it. If qdb\_config.txnid is set to it,
+it will be automatically cleared.
+
+## qdb\_abort
+```c
+void qdb_abort(DB_TXN *txn);
+```
+> Abort it. If it is qdb\_config.txnid, again, it gets cleared.
+
+## qdb\_checkpoint
+```c
+void qdb_checkpoint(unsigned kbytes, unsigned min, unsigned flags);
+```
+> This creates a checkpoint. You'll need the libdb docs
+for some more detail on some of this.
+
 # Types
 These are the built-in types we provide. You can add more if you like.
 ## "s" - char \*

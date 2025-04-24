@@ -7,8 +7,6 @@
 #include <time.h>
 #include <unistd.h>
 
-DB_TXN *txnid;
-
 unsigned QH_NOT_NEW = 1;
 
 typedef void del_t(unsigned hd, void *key);
@@ -365,8 +363,8 @@ unsigned gen_open(char *fname, unsigned mode, unsigned flags) {
 	}
 	qdb_config.mode = 0664;
 	if (mode) {
-		aux_hdp.hd[0] = qdb_open("hd", "u", "u", QH_SEC);
-		aux_hdp.hd[1] = qdb_open("rhd", "u", "u", QH_SEC);
+		aux_hdp.hd[0] = qdb_open("hd", "u", "u", QH_SEC | QH_DUP);
+		aux_hdp.hd[1] = qdb_open("rhd", "u", "u", QH_SEC | QH_DUP);
 		qdb_assoc(aux_hdp.hd[0], aux_hdp.phd, assoc_hd);
 		qdb_assoc(aux_hdp.hd[1], aux_hdp.phd, m1_assoc_rhd);
 	} else {
