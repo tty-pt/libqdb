@@ -1,5 +1,5 @@
-#ifndef QHASH_H
-#define QHASH_H
+#ifndef QDB_H
+#define QDB_H
 
 #include <errno.h>
 #include <stddef.h>
@@ -15,7 +15,7 @@
 #include <db.h>
 #endif
 
-#define FILO(name, TYPE) \
+#define FILO(name, TYPE, INVALID) \
 	struct name ## _item { \
 		TYPE value; \
 		SLIST_ENTRY(name ## _item) entry; \
@@ -32,9 +32,13 @@
 		item->value = id; \
 		SLIST_INSERT_HEAD(list, item, entry); \
 	} \
+	static inline TYPE name ## _peek(struct name *list) { \
+		struct name ## _item *top = SLIST_FIRST(list); \
+		return top ? top->value : INVALID; \
+	} \
 	static inline TYPE name ## _pop(struct name *list) { \
 		struct name ## _item *popped = SLIST_FIRST(list); \
-		if (!popped) return -1; \
+		if (!popped) return INVALID; \
 		TYPE ret = popped->value; \
 		SLIST_REMOVE_HEAD(list, entry); \
 		free(popped); \
@@ -51,7 +55,8 @@
 		while (!name ## _pop(list)); \
 	}
 
-#define HASH_DBS_MAX (64 * 512)
+#define QDB_DBS_MAX (64 * 512)
+#define QHD_NOT_FOUND qdb_meta_id;
 
 typedef void qdb_print_t(void *value);
 typedef size_t qdb_measure_t(void *value);
@@ -62,7 +67,8 @@ typedef struct {
 	size_t len;
 } qdb_type_t;
 
-FILO(idml, unsigned)
+FILO(idml, unsigned, -1)
+FILO(txnl, DB_TXN *, NULL)
 
 /* a struct for reusable ids */
 struct idm {
@@ -95,10 +101,10 @@ typedef struct meta {
 	qdb_type_t *type[2];
 } qdb_meta_t;
 
-extern qdb_meta_t qdb_meta[HASH_DBS_MAX];
+extern qdb_meta_t qdb_meta[QDB_DBS_MAX];
 
 extern qdb_type_t qdb_string, qdb_unsigned;
-extern unsigned types_hd;
+extern unsigned types_hd, qdb_meta_id;
 
 /* we have this config object mostly to avoid having
  * to specify much when opening databases */
@@ -108,7 +114,7 @@ struct qdb_config {
 	DBTYPE type;
 	char *file;
 	DB_ENV *env;
-	DB_TXN *txnid;
+	struct txnl txnl;
 };
 extern struct qdb_config qdb_config;
 
@@ -121,6 +127,7 @@ static inline void qdblog_perror(char *str) {
         qdblog(LOG_ERR, "%s: %s", str, strerror(errno));
 }
 
+__attribute__((noreturn))
 static inline void qdblog_err(char *str) {
         qdblog_perror(str);
         exit(EXIT_FAILURE);
@@ -182,12 +189,26 @@ static inline size_t qdb_len(unsigned hd, unsigned type, void *key) {
 }
 
 /* put a key-value pair (type aware) */
-static inline int
+static inline unsigned
 qdb_put(unsigned hd, void *key, void *value)
 {
-	return qdb_putc(hd,
-			key, qdb_len(hd, QDB_KEY, key),
-			value, qdb_len(hd, QDB_VALUE, value));
+	size_t key_len, value_len;
+	unsigned id = 0;
+
+	if (key != NULL)
+		key_len = qdb_len(hd, QDB_KEY, key);
+	else if (qdb_meta[hd].flags & QH_AINDEX) {
+		id = idm_new(&qdb_meta[hd].idm);
+		key = &id;
+		key_len = sizeof(unsigned);
+	} else
+		qdblog_err("qdb_put NULL key without QH_AINDEX");
+
+	value_len = qdb_len(hd, QDB_VALUE, value);
+	if (qdb_putc(hd, key, key_len, value, value_len))
+		return (unsigned) qdb_meta_id;
+
+	return id;
 }
 
 /* initialize the system */
@@ -213,13 +234,6 @@ void qdb_assoc(unsigned hd, unsigned link, qdb_assoc_t assoc);
 
 /* drop everything in a database */
 int qdb_drop(unsigned hd);
-
-/* put an item with auto index */
-static inline unsigned qdb_lput(unsigned hd, void *item) {
-	unsigned id = idm_new(&qdb_meta[hd].idm);
-	qdb_put(hd, &id, item);
-	return id;
-}
 
 /* get an item from a database (not type aware) */
 void *qdb_getc(unsigned hd, size_t *size, void *key_r, size_t key_len);
@@ -316,38 +330,39 @@ void qdb_env_open(DB_ENV *env, char *path);
 /* begin a transaction */
 static inline DB_TXN *qdb_begin(void) {
 	DB_TXN *txn;
-	if (qdb_config.env->txn_begin(qdb_config.env, NULL, &txn, 0)) {
+
+	if (qdb_config.env->txn_begin(qdb_config.env, txnl_peek(&qdb_config.txnl), &txn, 0)) {
 		qdblog(LOG_ERR, "Txn begin failed\n");
 		return NULL;
 	}
 
+	txnl_push(&qdb_config.txnl, txn);
 	return txn;
 }
 
 /* commit a transation */
-static inline void qdb_commit(DB_TXN *txnid) {
-	if (!txnid) {
-		txnid = qdb_config.txnid;
-		qdb_config.txnid = NULL;
-	}
+static inline void qdb_commit(void) {
+	DB_TXN *txn = txnl_pop(&qdb_config.txnl);
 
-	if (!txnid) {
+	if (!txn) {
 		qdblog(LOG_ERR, "No txn to commit\n");
 		return;
 	}
 
-	if (txnid->commit(txnid, 0))
+	if (txn->commit(txn, 0))
 		qdblog(LOG_ERR, "Txn commit failed\n");
 }
 
 /* abort a transation */
 static inline void qdb_abort(DB_TXN *txnid) {
-	if (!txnid) {
-		txnid = qdb_config.txnid;
-		qdb_config.txnid = NULL;
+	DB_TXN *txn = txnl_pop(&qdb_config.txnl);
+
+	if (!txn) {
+		qdblog(LOG_ERR, "No txn to abort\n");
+		return;
 	}
 
-	if (txnid->abort(txnid))
+	if (txnid->abort(txn))
 		qdblog(LOG_ERR, "Txn abort failed\n");
 }
 

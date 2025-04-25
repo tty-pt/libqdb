@@ -29,12 +29,11 @@ unsigned qhds, ahds, qhds_n = 0, ahds_n = 0;
 unsigned mode = 0, reverse = 0, tmprev_q, tmprev_a, bail = 0;
 
 void m0_put() {
+	void *key = NULL;
 	if (col)
-		qdb_put(prim.phd, key_buf, value_buf);
-	else {
-		unsigned id = qdb_lput(prim.phd, value_buf);
-		printf("%u\n", id);
-	}
+		key = key_buf;
+	unsigned id = qdb_put(prim.phd, key, value_buf);
+	printf("%u\n", id);
 }
 
 void m1_put(void *key, void *value) {
@@ -395,12 +394,12 @@ main(int argc, char *argv[])
 			break;
 		case 'a':
 			gen_open(optarg, 0, QH_RDONLY);
-			qdb_lput(ahds, &aux_hdp);
+			qdb_put(ahds, NULL, &aux_hdp);
 			ahds_n++;
 			break;
 		case 'q':
 			gen_open(optarg, 0, QH_RDONLY);
-			qdb_lput(qhds, &aux_hdp);
+			qdb_put(qhds, NULL, &aux_hdp);
 			qhds_n++;
 			break;
 		case 'x':
