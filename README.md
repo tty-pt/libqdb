@@ -36,17 +36,14 @@ void qdb_reg(char *key, size_t len);
 
 ## qdb\_put
 ```c
-int qdb_put(unsigned hd, void *key, void *value);
+unsigned qdb_put(unsigned hd, void *key, void *value);
 ```
 > Put a key value pair into the database
 
 Yeah, now that the database is type aware, we can easily put and retrieve values.
 
-## qdb\_lput
-```c
-int qdb_lput(unsigned hd, void *value);
-```
-> Put a value using automatic indexes
+If you use NULL as the key, it will generate an automatic index
+if the database is configured for it, and returns it.
 
 ## qdb\_get
 ```c
@@ -223,22 +220,20 @@ void *qdb_env_open(DB_ENV *env, char *dir);
 ## qdb\_begin
 ```c
 DB_TXN *qdb_begin(void);
-qdb_config.txnid = qdb_begin(); // often good
 ```
 > Begin a transaction
 
 ## qdb\_commit
 ```c
-void qdb_commit(DB_TXN *txn);
+void qdb_commit(void);
 ```
-> Commit it. If qdb\_config.txnid is set to it,
-it will be automatically cleared.
+> Commit the upmost transaction on the stack.
 
 ## qdb\_abort
 ```c
 void qdb_abort(DB_TXN *txn);
 ```
-> Abort it. If it is qdb\_config.txnid, again, it gets cleared.
+> Abort the upmost transaction on the stack.
 
 ## qdb\_checkpoint
 ```c
@@ -246,6 +241,11 @@ void qdb_checkpoint(unsigned kbytes, unsigned min, unsigned flags);
 ```
 > This creates a checkpoint. You'll need the libdb docs
 for some more detail on some of this.
+
+## transaction stack
+Although it is unlikely, you might need to copy the qdb\_config.txnl object.
+And replace it temporarily in case you are working with multiple databases
+and each needs its own transaction stack.
 
 # Types
 These are the built-in types we provide. You can add more if you like.
@@ -301,8 +301,27 @@ unsigned idm_new(struct idm *idm);
 ```
 > Get an id we can use.
 
-## FIFO(name, type)
-> This is just a macro to easily declare a FIFO. We use it for idml.
+## FILO(name, TYPE, INVALID)
+> This is just a macro to easily declare a FIFO. We use it for idml and txnl.
+
+I'm going to be brief describing the provided features.
+###  name\_init(void)
+> Initializes a stack of this kind.
+
+### name\_push(&stack, TYPE thing)
+> Pushes an element into it.
+
+### name\_peek(&stack)
+> Returns at the element at the top without popping it.
+
+### name\_pop(&stack)
+> Returns at the element at the top and pops it out of the stack.
+
+### name\_iter(&stack)
+> Starts iterating over the stack's elements.
+
+### name\_next(&slot, &stack)
+> Gets the next iteration and copies the element into the slot.
 
 # The cli tool
 This executable is a way to make indexes easily right from the shell.
