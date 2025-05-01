@@ -64,6 +64,7 @@ typedef size_t qdb_measure_t(void *value);
 typedef struct {
 	qdb_print_t *print;
 	qdb_measure_t *measure;
+	char *dbl;
 	size_t len;
 } qdb_type_t;
 
@@ -82,7 +83,7 @@ enum qdb_type {
 };
 
 /* associations are made using these callbacks */
-typedef void (*qdb_assoc_t)(void **data, uint32_t *len, void *key, void *value);
+typedef int (*qdb_assoc_t)(void **data, void *key, void *value);
 
 /* we store some metadata in the database to know
  * types and stuff later on */
@@ -95,9 +96,10 @@ typedef struct {
 
 /* we also have an in-memory metadata for each */
 typedef struct meta {
-	unsigned flags;
+	unsigned flags, phd;
 	qdb_assoc_t assoc;
 	struct idm idm;
+	char type_str[2][8];
 	qdb_type_t *type[2];
 } qdb_meta_t;
 
@@ -168,6 +170,12 @@ enum qdb_flags {
 
 	/* auto-index / auto-key (unsigned) */
 	QH_AINDEX = 32,
+
+	/* repurpose the primary db with different types */
+	QH_REPURPOSE = 64,
+
+	/* key is two combined values */
+	QH_TWIN = 128,
 };
 
 /* we use these cursors for iteration */
@@ -175,6 +183,45 @@ typedef struct {
 	int flags;
 	void *internal;
 } qdb_cur_t;
+
+/* begin a transaction */
+static inline DB_TXN *qdb_begin(void) {
+	DB_TXN *txn;
+
+	if (qdb_config.env->txn_begin(qdb_config.env, txnl_peek(&qdb_config.txnl), &txn, 0)) {
+		qdblog(LOG_ERR, "Txn begin failed\n");
+		return NULL;
+	}
+
+	txnl_push(&qdb_config.txnl, txn);
+	return txn;
+}
+
+/* commit a transation */
+static inline void qdb_commit(void) {
+	DB_TXN *txn = txnl_pop(&qdb_config.txnl);
+
+	if (!txn) {
+		qdblog(LOG_ERR, "No txn to commit\n");
+		return;
+	}
+
+	if (txn->commit(txn, 0))
+		qdblog(LOG_ERR, "Txn commit failed\n");
+}
+
+/* abort a transation */
+static inline void qdb_abort(void) {
+	DB_TXN *txn = txnl_pop(&qdb_config.txnl);
+
+	if (!txn) {
+		qdblog(LOG_ERR, "No txn to abort\n");
+		return;
+	}
+
+	if (txn->abort(txn))
+		qdblog(LOG_ERR, "Txn abort failed\n");
+}
 
 /* open a database (specify much) */
 unsigned qdb_openc(const char *file, const char *database, int mode, unsigned flags, int type, char *key_tid, char *value_tid);
@@ -184,8 +231,15 @@ int qdb_putc(unsigned hd, void *key, size_t key_len, void *value, size_t value_l
 
 /* get a key or value's length */
 static inline size_t qdb_len(unsigned hd, unsigned type, void *key) {
+	if (!key)
+		return 0;
 	qdb_type_t *mthing = qdb_meta[hd].type[type];
 	return mthing->len ? mthing->len : mthing->measure(key);
+}
+
+/* get the type of a key or value */
+static inline char *qdb_type(unsigned hd, unsigned type) {
+	return qdb_meta[hd].type_str[type];
 }
 
 /* put a key-value pair (type aware) */
@@ -195,9 +249,11 @@ qdb_put(unsigned hd, void *key, void *value)
 	size_t key_len, value_len;
 	unsigned id = 0;
 
-	if (key != NULL)
+	if (key != NULL) {
 		key_len = qdb_len(hd, QDB_KEY, key);
-	else if (qdb_meta[hd].flags & QH_AINDEX) {
+		if (!strcmp(qdb_type(hd, QDB_KEY), "u"))
+			id = * (unsigned *) key;
+	} else if (qdb_meta[hd].flags & QH_AINDEX) {
 		id = idm_new(&qdb_meta[hd].idm);
 		key = &id;
 		key_len = sizeof(unsigned);
@@ -252,32 +308,6 @@ static inline int qdb_exists(unsigned hd, void *key)
 	return qdb_existsc(hd, key, qdb_len(hd, QDB_KEY, key));
 }
 
-/* get a primary key from a secondary one */
-int qdb_pget(unsigned hd, void *pkey, void *key);
-
-/* start iterating */
-qdb_cur_t qdb_iter(unsigned hd, void *key);
-
-/* delete item under cursor (iteration) */
-int qdb_cdel(qdb_cur_t *cur);
-
-/* delete all values matching a key */
-static inline void qdb_del(unsigned hd, void *key) {
-	if (qdb_meta[hd].flags & QH_AINDEX)
-		idm_del(&qdb_meta[hd].idm, * (unsigned *) key);
-
-	qdb_cur_t c = qdb_iter(hd, key);
-
-	while (qdb_next(NULL, NULL, &c))
-		qdb_cdel(&c);
-}
-
-/* open a database (specify little) */
-static inline int qdb_open(char *database, char *key_tid, char *value_tid, unsigned flags) {
-	return qdb_openc(qdb_config.file, database, qdb_config.mode,
-			flags | qdb_config.flags, qdb_config.type, key_tid, value_tid);
-}
-
 /* get the first value for a given key (type aware) */
 static inline int qdb_get(unsigned hd, void *value, void *key)
 {
@@ -289,6 +319,61 @@ static inline int qdb_get(unsigned hd, void *value, void *key)
 
 	memcpy(value, value_r, size);
 	return 0;
+}
+
+/* get a primary key from a secondary one */
+void *qdb_pgetc(unsigned hd, size_t *len, void *key);
+
+static inline int qdb_pget(unsigned hd, void *pkey_r, void *key_r) {
+	unsigned flags = qdb_meta[hd].flags;
+	void *data;
+	size_t len;
+
+	if (flags & QH_REPURPOSE)
+		return qdb_get(hd, pkey_r, key_r);
+
+	data = qdb_pgetc(hd, &len, key_r);
+	if (!data)
+		return 1;
+
+	memcpy(pkey_r, data, len);
+	return 0;
+}
+
+/* start iterating */
+qdb_cur_t qdb_iter(unsigned hd, void *key);
+
+/* delete item under cursor (iteration) */
+int qdb_cdel(qdb_cur_t *cur);
+
+/* delete all values matching a key */
+static inline void qdb_del(unsigned hd, void *key) {
+	qdb_meta_t *meta = &qdb_meta[hd];
+
+	/* qdb_begin(); */
+
+	if (meta->flags & QH_SEC) {
+		size_t len;
+		key = qdb_pgetc(hd, &len, key);
+		hd = meta->phd;
+		meta = &qdb_meta[hd];
+	}
+
+	if (meta->flags & QH_AINDEX)
+		idm_del(&meta->idm, * (unsigned *) key);
+
+	qdb_cur_t c = qdb_iter(hd, key);
+
+	while (qdb_next(NULL, NULL, &c))
+		qdb_cdel(&c);
+
+	/* qdb_commit(); */
+}
+
+/* open a database (specify little) */
+static inline int qdb_open(char *database, char *key_tid, char *value_tid, unsigned flags) {
+	return qdb_openc(qdb_config.file, database, qdb_config.mode,
+			flags | qdb_config.flags, qdb_config.type, key_tid, value_tid);
 }
 
 /* register a type of key / value */
@@ -304,6 +389,7 @@ qdb_reg(char *key, size_t len) {
 	type->measure = NULL;
 	type->print = NULL;
 	type->len = len;
+	type->dbl = NULL;
 	qdb_put(types_hd, key, &type);
 }
 
@@ -312,59 +398,16 @@ static inline void qdb_print(unsigned hd, unsigned type, void *thing) {
 	qdb_meta[hd].type[type]->print(thing);
 }
 
-/* TRANSACTIONS */
-
 /* create a database environment */
 static inline DB_ENV *qdb_env_create(void) {
 	DB_ENV *env;
 	db_env_create(&env, 0);
-	env->set_flags(env, DB_AUTO_COMMIT, 1);
 	env->set_lk_detect(env, DB_LOCK_OLDEST);
-	env->set_tx_max(env, 5 * 60);
 	return env;
 }
 
 /* open a database environment */
-void qdb_env_open(DB_ENV *env, char *path);
-
-/* begin a transaction */
-static inline DB_TXN *qdb_begin(void) {
-	DB_TXN *txn;
-
-	if (qdb_config.env->txn_begin(qdb_config.env, txnl_peek(&qdb_config.txnl), &txn, 0)) {
-		qdblog(LOG_ERR, "Txn begin failed\n");
-		return NULL;
-	}
-
-	txnl_push(&qdb_config.txnl, txn);
-	return txn;
-}
-
-/* commit a transation */
-static inline void qdb_commit(void) {
-	DB_TXN *txn = txnl_pop(&qdb_config.txnl);
-
-	if (!txn) {
-		qdblog(LOG_ERR, "No txn to commit\n");
-		return;
-	}
-
-	if (txn->commit(txn, 0))
-		qdblog(LOG_ERR, "Txn commit failed\n");
-}
-
-/* abort a transation */
-static inline void qdb_abort(void) {
-	DB_TXN *txn = txnl_pop(&qdb_config.txnl);
-
-	if (!txn) {
-		qdblog(LOG_ERR, "No txn to abort\n");
-		return;
-	}
-
-	if (txn->abort(txn))
-		qdblog(LOG_ERR, "Txn abort failed\n");
-}
+void qdb_env_open(DB_ENV *env, char *path, unsigned flags);
 
 /* abort a transation */
 static inline void qdb_checkpoint(unsigned kbytes, unsigned min, unsigned flags) {

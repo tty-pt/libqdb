@@ -111,9 +111,14 @@ qdb_putc(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len
 	return ret;
 }
 
+static inline DB *qdb_db_get(unsigned hd) {
+	qdb_meta_t *meta = &qdb_meta[hd];
+	return qdb_dbs[meta->flags & QH_REPURPOSE ? meta->phd : hd];
+}
+
 void *qdb_getc(unsigned hd, size_t *size, void *key_r, size_t key_len)
 {
-	DB *db = qdb_dbs[hd];
+	DB *db = qdb_db_get(hd);
 	DBT key, data;
 	int ret;
 
@@ -188,6 +193,7 @@ qdb_init(void) {
 	qdb_regc("u", &qdb_unsigned);
 	qdb_reg("p", sizeof(void *));
 	qdb_reg("ul", sizeof(unsigned long));
+	qdb_unsigned.dbl = "ul";
 	qdb_config.mode = 0644;
 	qdb_config.type = DB_HASH;
 	qdb_config.file = NULL;
@@ -235,7 +241,7 @@ qdb_openc(const char *file, const char *database, int mode, unsigned flags, int 
 	if (flags & QH_TXN)
 		qdb_commit();
 
-	if (flags & QH_SEC)
+	if (flags & (QH_SEC | QH_REPURPOSE))
 		goto out;
 
 	size_t val_len;
@@ -243,8 +249,8 @@ qdb_openc(const char *file, const char *database, int mode, unsigned flags, int 
 		qdb_getc(id, &val_len, &qdb_meta_id, sizeof(qdb_meta_id));
 
 	if (smeta) {
-		qdb_get(types_hd, &key_type, smeta->key);
-		qdb_get(types_hd, &value_type, smeta->value);
+		key_tid = smeta->key;
+		value_tid = smeta->value;
 		flags |= smeta->flags;
 	} else {
 		qdb_smeta_t put_smeta = {
@@ -252,8 +258,6 @@ qdb_openc(const char *file, const char *database, int mode, unsigned flags, int 
 			.extra = 0,
 		};
 
-		qdb_get(types_hd, &key_type, key_tid);
-		qdb_get(types_hd, &value_type, value_tid);
 		strcpy(put_smeta.key, key_tid);
 		strcpy(put_smeta.value, value_tid);
 
@@ -261,29 +265,33 @@ qdb_openc(const char *file, const char *database, int mode, unsigned flags, int 
 				&put_smeta, sizeof(put_smeta));
 	}
 
+	qdb_get(types_hd, &key_type, key_tid);
+	qdb_get(types_hd, &value_type, value_tid);
+
 	if (flags & QH_AINDEX)
 		_qdb_lopenc(id, value_type);
 
 out:
+	strcpy(qdb_meta[id].type_str[QDB_KEY], key_tid);
+	strcpy(qdb_meta[id].type_str[QDB_VALUE], value_tid);
+	qdb_meta[id].phd = qdb_meta_id;
 	qdb_meta[id].flags = flags;
 	qdb_meta[id].type[QDB_KEY] = key_type;
 	qdb_meta[id].type[QDB_VALUE] = value_type;
 
 #if 0
-	fprintf(stderr, "open %u %s %s "
-			"%u %p %s %s %p %p\n",
+	fprintf(stderr, "open %u %s %s %u %s %s\n",
 			id, file, database,
-			flags,
-			(void *) &qdb_meta[id],
-			key_tid, value_tid,
-			(void *) key_type, (void *) value_type);
+			flags, key_tid, value_tid);
 #endif
 
 	return id;
 }
 
-int qdb_pget(unsigned hd, void *pkey_r, void *key_r) {
-	DB *db = qdb_dbs[hd];
+void *qdb_pgetc(unsigned hd, size_t *len, void *key_r) {
+	unsigned flags = qdb_meta[hd].flags;
+
+	DB *db = qdb_db_get(hd);
 	DBT key, pkey, data;
 	int ret;
 
@@ -295,27 +303,38 @@ int qdb_pget(unsigned hd, void *pkey_r, void *key_r) {
 	key.size = qdb_len(hd, QDB_KEY, key_r);
 	pkey.flags = data.flags = DB_DBT_MALLOC;
 
-	ret = db->pget(db, (qdb_meta[hd].flags & QH_TXN)
+	ret = db->pget(db, (flags & QH_TXN)
 			? txnl_peek(&qdb_config.txnl)
 			: NULL, &key, &pkey, &data, 0);
 
 	if (ret == DB_NOTFOUND)
-		return 1;
+		return NULL;
 	else if (ret)
 		qdblog_err("qdb_pget");
 
-	memcpy(pkey_r, pkey.data, pkey.size);
-	return 0;
+	*len = pkey.size;
+	return pkey.data;
 }
 
 int
 map_assoc(DB *sec, const DBT *key, const DBT *data, DBT *result)
 {
 	memset(result, 0, sizeof(DBT));
-	result->flags = DB_DBT_MALLOC;
+	/* result->flags = DB_DBT_MALLOC; */
 	unsigned hd;
-	qdb_get(0, &hd, &sec); // assumed success (0)
-	qdb_meta[hd].assoc(&result->data, &result->size, key->data, data->data);
+	if (qdb_get(0, &hd, &sec)) {
+		// TODO WARNING
+		return DB_DONOTINDEX;
+	}
+
+	void *skey;
+	
+	if (qdb_meta[hd].assoc(&skey, key->data, data->data) != 0)
+		return DB_DONOTINDEX;
+
+	result->data = skey;
+	result->size = qdb_len(hd, QDB_KEY, result->data);
+	result->flags = 0;
 	return 0;
 }
 
@@ -324,25 +343,52 @@ qdb_assoc(unsigned hd, unsigned link, qdb_assoc_t cb)
 {
 	DB *db = qdb_dbs[hd];
 	DB *ldb = qdb_dbs[link];
-	qdb_meta[hd].assoc = cb;
-	qdb_meta[hd].flags |= QH_SEC;
+	qdb_meta_t *meta = &qdb_meta[hd];
+	meta->assoc = cb;
+	meta->phd = link;
+
+	if (!cb) {
+		meta->flags |= QH_REPURPOSE;
+		return;
+	}
+
+	meta->flags |= QH_SEC;
 
 	if (ldb->associate(ldb, (qdb_meta[hd].flags & QH_TXN)
 				? txnl_peek(&qdb_config.txnl) : NULL,
-				db, map_assoc, DB_CREATE | DB_IMMUTABLE_KEY))
+				db, map_assoc, DB_CREATE))
 
 		qdblog_err("qdb_assoc");
+}
+
+typedef int get_t(DBC *dbc, DBT *key, DBT *pkey, DBT *data, unsigned flags);
+
+int primary_get(DBC *dbc, DBT *key __attribute__((unused)), DBT *pkey, DBT *data, unsigned flags) {
+	return dbc->get(dbc, pkey, data, flags);
 }
 
 int
 qdb_rem(unsigned hd, void *key_data, void *value_data)
 {
-	DB *db = qdb_dbs[hd];
-	DBT key, data;
+	DB *db = qdb_db_get(hd);
+	DBT key, data, pkey;
 	DBC *cursor;
-	int ret, flags = DB_SET;
+	int ret, flags = DB_FIRST;
 
 	qdb_meta_t *meta = &qdb_meta[hd];
+
+	if (meta->flags & QH_REPURPOSE) {
+		if (qdb_meta[meta->phd].flags & QH_TWIN) {
+			size_t key_len = qdb_len(meta->phd, QDB_VALUE, value_data);
+			char buf[2 * key_len];
+			key.data = buf;
+			key.size = sizeof(buf);
+			memcpy(buf, key_data, key_len);
+			memcpy(buf + key_len, value_data, key_len);
+			return qdb_rem(meta->phd, buf, buf + key_len);
+		} else
+			qdblog_err("qdb_rem tried to remove from a repurposed non-twin");
+	}
 
 	if ((ret = db->cursor(db, hd && (meta->flags & QH_TXN)
 					? txnl_peek(&qdb_config.txnl) : NULL,
@@ -353,31 +399,41 @@ qdb_rem(unsigned hd, void *key_data, void *value_data)
 	}
 
 	memset(&key, 0, sizeof(DBT));
-	key.data = key_data;
-	key.size = qdb_len(hd, QDB_KEY, key_data);
+	memset(&pkey, 0, sizeof(DBT));
+	pkey.data = key.data = key_data;
+	pkey.size = key.size = qdb_len(hd, QDB_KEY, key_data);
+	pkey.flags = key.flags = 0;
+
 	memset(&data, 0, sizeof(DBT));
 	data.flags = DB_DBT_MALLOC;
 	data.data = value_data;
-	size_t supposed_size = data.size
-		= qdb_len(hd, QDB_VALUE, value_data);
+	data.size = qdb_len(hd, QDB_VALUE, value_data);
+	size_t supposed_size = data.size;
 
-	while (!(ret = cursor->get(cursor, &key, &data, flags))) {
+	get_t *get = (meta->flags & QH_SEC)
+		? cursor->pget
+		: primary_get;
+
+	while (!(ret = get(cursor, &key, &pkey, &data, flags))) {
 		flags = DB_NEXT_DUP;
 
+		if (!memcmp(pkey.data, &qdb_meta_id, sizeof(qdb_meta_id)))
+			continue;
+
 		if (data.size == supposed_size && memcmp(data.data, value_data, supposed_size) == 0) {
-			ret = cursor->del(cursor, 0);
+			if (meta->flags & QH_SEC) {
+				DB *pdb = qdb_dbs[meta->phd];
+				ret = pdb->del(pdb, NULL, &pkey, 0);
+			} else
+				ret = cursor->del(cursor, 0);
 			break;
 		}
 	}
 
 	cursor->close(cursor);
-	return ret == DB_NOTFOUND ? 0 : ret;
-}
-
-typedef int get_t(DBC *dbc, DBT *key, DBT *pkey, DBT *data, unsigned flags);
-
-int primary_get(DBC *dbc, DBT *key __attribute__((unused)), DBT *pkey, DBT *data, unsigned flags) {
-	return dbc->get(dbc, pkey, data, flags);
+	if (ret)
+		qdblog(LOG_ERR, "qdb_rem: %s", db_strerror(ret));
+	return 0;
 }
 
 struct qdb_internal {
@@ -389,7 +445,7 @@ struct qdb_internal {
 
 qdb_cur_t
 qdb_iter(unsigned hd, void *key) {
-	DB *db = qdb_dbs[hd];
+	DB *db = qdb_db_get(hd);
 	qdb_cur_t cur;
 	struct qdb_internal *internal = malloc(sizeof(struct qdb_internal));
 	cur.internal = internal;
@@ -508,6 +564,8 @@ int qdb_drop(unsigned hd) {
 
 void
 qdb_close(unsigned hd, unsigned flags) {
+	if (qdb_meta[hd].flags & QH_REPURPOSE)
+		return;
 	DB *db = qdb_dbs[hd];
 	db->close(db, flags);
 	idm_del(&idm, hd);
@@ -528,11 +586,23 @@ unsigned idm_new(struct idm *idm) {
 	return ret;
 }
 
-void qdb_env_open(DB_ENV *env, char *path) {
-	struct stat st;
-	if (stat(path, &st) != 0)
-		mkdir(path, 0755);
+void qdb_env_open(DB_ENV *env, char *path, unsigned flags) {
+	unsigned iflags = DB_CREATE | DB_INIT_MPOOL | DB_INIT_LOCK | DB_INIT_LOG | DB_THREAD;
 
-	env->open(env, path, DB_CREATE | DB_RECOVER | DB_INIT_MPOOL | DB_INIT_TXN | DB_INIT_LOCK | DB_INIT_LOG | DB_THREAD, 0);
+	if (flags & QH_TXN) {
+		env->set_flags(env, DB_AUTO_COMMIT, 1);
+		env->set_tx_max(env, 5 * 60);
+		iflags |= DB_INIT_TXN | DB_RECOVER;
+	}
+
+	if (path == NULL) {
+		iflags |= DB_PRIVATE;
+	} else {
+		struct stat st;
+		if (stat(path, &st) != 0)
+			mkdir(path, 0755);
+	}
+
+	env->open(env, path, iflags, 0);
 	qdb_config.env = env;
 }
