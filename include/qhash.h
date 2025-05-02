@@ -329,9 +329,6 @@ static inline int qdb_pget(unsigned hd, void *pkey_r, void *key_r) {
 	void *data;
 	size_t len;
 
-	if (flags & QH_REPURPOSE)
-		return qdb_get(hd, pkey_r, key_r);
-
 	data = qdb_pgetc(hd, &len, key_r);
 	if (!data)
 		return 1;
@@ -350,15 +347,6 @@ int qdb_cdel(qdb_cur_t *cur);
 static inline void qdb_del(unsigned hd, void *key) {
 	qdb_meta_t *meta = &qdb_meta[hd];
 
-	/* qdb_begin(); */
-
-	if (meta->flags & QH_SEC) {
-		size_t len;
-		key = qdb_pgetc(hd, &len, key);
-		hd = meta->phd;
-		meta = &qdb_meta[hd];
-	}
-
 	if (meta->flags & QH_AINDEX)
 		idm_del(&meta->idm, * (unsigned *) key);
 
@@ -366,8 +354,6 @@ static inline void qdb_del(unsigned hd, void *key) {
 
 	while (qdb_next(NULL, NULL, &c))
 		qdb_cdel(&c);
-
-	/* qdb_commit(); */
 }
 
 /* open a database (specify little) */

@@ -158,6 +158,10 @@ void qdb_assoc(unsigned hd, unsigned link, qdb_assoc_t assoc);
 typedef void (*qdb_assoc_t)(void **data, uint32_t *len, void *key, void *value);
 ```
 > Associate a secondary database to a primary one.
+
+If you use NULL as the callback, the secondary key will be the
+same pointer as the primary, but it might be used with a different
+type setting.
 ## qdb\_cdel
 ```c
 int qdb_cdel(qdb_cur_t *cur);

@@ -111,14 +111,9 @@ qdb_putc(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len
 	return ret;
 }
 
-static inline DB *qdb_db_get(unsigned hd) {
-	qdb_meta_t *meta = &qdb_meta[hd];
-	return qdb_dbs[meta->flags & QH_REPURPOSE ? meta->phd : hd];
-}
-
 void *qdb_getc(unsigned hd, size_t *size, void *key_r, size_t key_len)
 {
-	DB *db = qdb_db_get(hd);
+	DB *db = qdb_dbs[hd];
 	DBT key, data;
 	int ret;
 
@@ -291,7 +286,7 @@ out:
 void *qdb_pgetc(unsigned hd, size_t *len, void *key_r) {
 	unsigned flags = qdb_meta[hd].flags;
 
-	DB *db = qdb_db_get(hd);
+	DB *db = qdb_dbs[hd];
 	DBT key, pkey, data;
 	int ret;
 
@@ -312,6 +307,11 @@ void *qdb_pgetc(unsigned hd, size_t *len, void *key_r) {
 	else if (ret)
 		qdblog_err("qdb_pget");
 
+	if (flags & QH_REPURPOSE) {
+		*len = data.size;
+		return data.data;
+	}
+
 	*len = pkey.size;
 	return pkey.data;
 }
@@ -319,6 +319,9 @@ void *qdb_pgetc(unsigned hd, size_t *len, void *key_r) {
 int
 map_assoc(DB *sec, const DBT *key, const DBT *data, DBT *result)
 {
+	if (* (unsigned *) key->data == (unsigned) -2)
+		return DB_DONOTINDEX;
+
 	memset(result, 0, sizeof(DBT));
 	/* result->flags = DB_DBT_MALLOC; */
 	unsigned hd;
@@ -338,19 +341,26 @@ map_assoc(DB *sec, const DBT *key, const DBT *data, DBT *result)
 	return 0;
 }
 
+int
+qdb_twin_assoc(void **skey, void *key, void *value __attribute__((unused))) {
+	*skey = key;
+	return 0;
+}
+
 void
 qdb_assoc(unsigned hd, unsigned link, qdb_assoc_t cb)
 {
 	DB *db = qdb_dbs[hd];
 	DB *ldb = qdb_dbs[link];
 	qdb_meta_t *meta = &qdb_meta[hd];
-	meta->assoc = cb;
-	meta->phd = link;
 
 	if (!cb) {
 		meta->flags |= QH_REPURPOSE;
-		return;
+		cb = qdb_twin_assoc;
 	}
+
+	meta->assoc = cb;
+	meta->phd = link;
 
 	meta->flags |= QH_SEC;
 
@@ -370,25 +380,12 @@ int primary_get(DBC *dbc, DBT *key __attribute__((unused)), DBT *pkey, DBT *data
 int
 qdb_rem(unsigned hd, void *key_data, void *value_data)
 {
-	DB *db = qdb_db_get(hd);
+	DB *db = qdb_dbs[hd];
 	DBT key, data, pkey;
 	DBC *cursor;
-	int ret, flags = DB_FIRST;
+	int ret, flags = DB_SET;
 
 	qdb_meta_t *meta = &qdb_meta[hd];
-
-	if (meta->flags & QH_REPURPOSE) {
-		if (qdb_meta[meta->phd].flags & QH_TWIN) {
-			size_t key_len = qdb_len(meta->phd, QDB_VALUE, value_data);
-			char buf[2 * key_len];
-			key.data = buf;
-			key.size = sizeof(buf);
-			memcpy(buf, key_data, key_len);
-			memcpy(buf + key_len, value_data, key_len);
-			return qdb_rem(meta->phd, buf, buf + key_len);
-		} else
-			qdblog_err("qdb_rem tried to remove from a repurposed non-twin");
-	}
 
 	if ((ret = db->cursor(db, hd && (meta->flags & QH_TXN)
 					? txnl_peek(&qdb_config.txnl) : NULL,
@@ -405,10 +402,9 @@ qdb_rem(unsigned hd, void *key_data, void *value_data)
 	pkey.flags = key.flags = 0;
 
 	memset(&data, 0, sizeof(DBT));
-	data.flags = DB_DBT_MALLOC;
+	data.flags = 0; /* was DB_DBT_MALLOC */
 	data.data = value_data;
 	data.size = qdb_len(hd, QDB_VALUE, value_data);
-	size_t supposed_size = data.size;
 
 	get_t *get = (meta->flags & QH_SEC)
 		? cursor->pget
@@ -420,15 +416,10 @@ qdb_rem(unsigned hd, void *key_data, void *value_data)
 		if (!memcmp(pkey.data, &qdb_meta_id, sizeof(qdb_meta_id)))
 			continue;
 
-		if (data.size == supposed_size && memcmp(data.data, value_data, supposed_size) == 0) {
-			if (meta->flags & QH_SEC) {
-				DB *pdb = qdb_dbs[meta->phd];
-				ret = pdb->del(pdb, NULL, &pkey, 0);
-			} else
-				ret = cursor->del(cursor, 0);
-			break;
-		}
+		break;
 	}
+
+	ret = cursor->del(cursor, 0);
 
 	cursor->close(cursor);
 	if (ret)
@@ -445,7 +436,7 @@ struct qdb_internal {
 
 qdb_cur_t
 qdb_iter(unsigned hd, void *key) {
-	DB *db = qdb_db_get(hd);
+	DB *db = qdb_dbs[hd];
 	qdb_cur_t cur;
 	struct qdb_internal *internal = malloc(sizeof(struct qdb_internal));
 	cur.internal = internal;
@@ -461,7 +452,7 @@ qdb_iter(unsigned hd, void *key) {
 	memset(&internal->key, 0, sizeof(DBT));
 	memset(&internal->data, 0, sizeof(DBT));
 	internal->pkey.data = internal->key.data = key;
-	internal->key.flags = internal->pkey.flags = internal->data.flags = DB_DBT_MALLOC;
+	internal->key.flags = internal->pkey.flags = internal->data.flags = 0; /* was DB_DBT_MALLOC */
 	internal->pkey.size = internal->key.size
 		= key ? qdb_len(hd, QDB_KEY, key) : 0;
 	internal->get = (meta->flags & QH_SEC)
@@ -564,8 +555,6 @@ int qdb_drop(unsigned hd) {
 
 void
 qdb_close(unsigned hd, unsigned flags) {
-	if (qdb_meta[hd].flags & QH_REPURPOSE)
-		return;
 	DB *db = qdb_dbs[hd];
 	db->close(db, flags);
 	idm_del(&idm, hd);

@@ -55,6 +55,8 @@ static inline void *rec_query(unsigned qhds, char *tbuf, char *buf, unsigned tmp
 		if (strcmp(qdb_type(aux_hdp.hd[tmprev], QDB_VALUE), lktype))
 			tmprev = !tmprev;
 		if (strcmp(qdb_type(aux_hdp.hd[tmprev], QDB_VALUE), lktype)) {
+			// TODO free idml
+			idml_drop(&rqs);
 			fprintf(stderr, "Invalid query sequence\n");
 			qdb_fin(&c2);
 			return NULL;
@@ -287,17 +289,11 @@ static inline void gen_list_missing() {
 }
 
 int assoc_rhd(void **data, void *key, void *value) {
-	if (* (unsigned *) key == (unsigned) -2)
-		return DB_DONOTINDEX;
-
 	*data = value; // string
 	return 0;
 }
 
 int assoc_hd(void **data, void *key, void *value) {
-	if (* (unsigned *) key == (unsigned) -2)
-		return DB_DONOTINDEX;
-
 	*data = key; // unsigned
 	return 0;
 }
@@ -305,7 +301,7 @@ int assoc_hd(void **data, void *key, void *value) {
 void gen_open(char *fname, unsigned flags) {
 	char buf[BUFSIZ], *key_type = "u", *value_type = "s";
 	static unsigned minus_two = -2;
-	unsigned existed;
+	size_t len;
 
 	strcpy(buf, fname);
 
@@ -328,13 +324,11 @@ void gen_open(char *fname, unsigned flags) {
 		} else if (!strcmp(first_col, "t")) {
 			flags |= QH_TWIN;
 			qdb_type_t *ktype;
-			qdb_get(types_hd, &ktype, key_type);
+			qdb_get(types_hd, &ktype, value_type);
 			key_type = ktype->dbl;
 		} else
 			key_type = first_col;
 	}
-
-	existed = access(buf, F_OK) == 0;
 
 	qdb_config.file = buf;
 	qdb_config.mode = flags & QH_RDONLY ? 0644 : 0664;
@@ -343,27 +337,23 @@ void gen_open(char *fname, unsigned flags) {
 
 	aux_hdp.flags = flags;
 	aux_hdp.phd = qdb_open("phd", key_type, value_type, aux_hdp.flags);
+
+	// get database info - it might exist already
 	strlcpy(aux_hdp.fname, buf, BUFSIZ);
-	if (existed) {
-		size_t len;
-		qdb_smeta_t *smeta = qdb_getc(aux_hdp.phd, &len, &minus_two, sizeof(minus_two));
-		aux_hdp.flags |= QH_NOT_NEW;
-		key_type = smeta->key;
-		value_type = smeta->value;
-		flags = smeta->flags;
-		// for secondaries, we don't need dbl keys
-		if (smeta->flags & QH_TWIN)
-			key_type = value_type;
-	}
+	qdb_smeta_t *smeta = qdb_getc(aux_hdp.phd, &len, &minus_two, sizeof(minus_two));
+	aux_hdp.flags |= QH_NOT_NEW;
+	key_type = smeta->key;
+	value_type = smeta->value;
+	flags = smeta->flags;
+	// for secondaries, we don't need dbl keys
+	if (smeta->flags & QH_TWIN)
+		key_type = value_type;
 
 	aux_hdp.flags = flags;
 
-	aux_hdp.hd[0] = qdb_open("hd", key_type, value_type, QH_DUP | QH_REPURPOSE);
+	qdb_config.type = DB_BTREE; /* prefer in-order for this */
+	aux_hdp.hd[0] = qdb_open("hd", key_type, value_type, QH_DUP | QH_SEC);
 	qdb_assoc(aux_hdp.hd[0], aux_hdp.phd, NULL);
-
-	if (flags & QH_TWIN)
-		qdb_config.type = DB_BTREE;
-
 	aux_hdp.hd[1] = qdb_open("rhd", value_type, key_type, QH_DUP | QH_SEC);
 	qdb_assoc(aux_hdp.hd[1], aux_hdp.phd, assoc_rhd);
 }
@@ -371,8 +361,7 @@ void gen_open(char *fname, unsigned flags) {
 static inline void hdpair_close(struct hdpair *pair) {
 	qdb_close(pair->hd[1], 0);
 	qdb_close(pair->hd[0], 0);
-	if (pair->phd != pair->hd[0])
-		qdb_close(pair->phd, 0);
+	qdb_close(pair->phd, 0);
 	if (!(pair->flags & QH_NOT_NEW) && (pair->flags & QH_RDONLY))
 		unlink(pair->fname);
 }

@@ -77,7 +77,12 @@ assert snap/3.txt ./qhash -l a.db
 assert $EMPTY ./qhash -p 5:9 a.db
 assert $EMPTY ./qhash -d 5:9 a.db
 assert snap/3.txt ./qhash -l a.db
-# TODO test reverse del
+assert $EMPTY ./qhash -p 5:9 a.db
+assert $EMPTY ./qhash -rd 9:5 a.db
+assert snap/3.txt ./qhash -l a.db
+assert $EMPTY ./qhash -p 5:9 -p 5:8 a.db
+assert $EMPTY ./qhash -rd 5 a.db
+assert snap/3.txt ./qhash -l a.db
 
 # TODO test associative printing (normal and reverse)
 # TODO test bail
