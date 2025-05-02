@@ -198,7 +198,7 @@ qdb_init(void) {
 }
 
 unsigned
-qdb_openc(const char *file, const char *database, int mode, unsigned flags, int type, char *key_tid, char *value_tid)
+_qdb_openc(const char *file, const char *database, int mode, unsigned flags, int type, char *key_tid, char *value_tid)
 {
 	DB *db;
 	unsigned id, dbflags = 0;
@@ -222,7 +222,7 @@ qdb_openc(const char *file, const char *database, int mode, unsigned flags, int 
 	db = qdb_dbs[id];
 	qdb_put(0, &qdb_dbs[id], &id);
 
-	if (flags & QH_DUP)
+	if (flags & QH_DUP && !(flags & QH_THRICE))
 		if (db->set_flags(db, DB_DUP))
 			qdblog_err("qdb_openc: set_flags");
 
@@ -246,7 +246,7 @@ qdb_openc(const char *file, const char *database, int mode, unsigned flags, int 
 	if (smeta) {
 		key_tid = smeta->key;
 		value_tid = smeta->value;
-		flags |= smeta->flags;
+		flags = smeta->flags;
 	} else {
 		qdb_smeta_t put_smeta = {
 			.flags = flags,
@@ -281,6 +281,50 @@ out:
 #endif
 
 	return id;
+}
+
+int qdb_assoc_rhd(void **skey, void *key __attribute__((unused)), void *value) {
+	*skey = value; // string
+	return 0;
+}
+
+unsigned
+qdb_openc(const char *file, const char *database, int mode, unsigned flags, int type, char *key_tid, char *value_tid)
+{
+	char buf[BUFSIZ];
+	size_t len;
+
+	if (!(flags & QH_THRICE))
+		return _qdb_openc(file, database, mode, flags, type, key_tid, value_tid);
+
+	if (flags & QH_DUP) {
+		qdb_type_t *vtype;
+		qdb_get(types_hd, &vtype, value_tid);
+		key_tid = vtype->dbl;
+	}
+
+	snprintf(buf, sizeof(buf), "%sphd", database);
+	unsigned phd = _qdb_openc(file, buf, mode, flags, DB_HASH, key_tid, value_tid);
+
+	qdb_smeta_t *smeta = qdb_getc(phd, &len, &qdb_meta_id, sizeof(qdb_meta_id));
+	key_tid = smeta->key;
+	value_tid = smeta->value;
+	flags = smeta->flags;
+	flags &= ~(QH_THRICE | QH_AINDEX);
+	flags |= QH_DUP | QH_SEC;
+
+	// for secondaries, we don't need dbl keys
+	if (smeta->flags & QH_DUP)
+		key_tid = value_tid;
+
+	snprintf(buf, sizeof(buf), "%shd", database);
+	_qdb_openc(file, buf, mode, flags, DB_BTREE, key_tid, value_tid);
+	qdb_assoc(phd + 1, phd, NULL);
+
+	snprintf(buf, sizeof(buf), "%srhd", database);
+	_qdb_openc(file, buf, mode, flags, DB_BTREE, value_tid, key_tid);
+	qdb_assoc(phd + 2, phd, qdb_assoc_rhd);
+	return phd;
 }
 
 void *qdb_pgetc(unsigned hd, size_t *len, void *key_r) {
@@ -319,18 +363,18 @@ void *qdb_pgetc(unsigned hd, size_t *len, void *key_r) {
 int
 map_assoc(DB *sec, const DBT *key, const DBT *data, DBT *result)
 {
+	unsigned hd;
+	void *skey;
+
 	if (* (unsigned *) key->data == (unsigned) -2)
 		return DB_DONOTINDEX;
 
-	memset(result, 0, sizeof(DBT));
-	/* result->flags = DB_DBT_MALLOC; */
-	unsigned hd;
 	if (qdb_get(0, &hd, &sec)) {
 		// TODO WARNING
 		return DB_DONOTINDEX;
 	}
 
-	void *skey;
+	memset(result, 0, sizeof(DBT));
 	
 	if (qdb_meta[hd].assoc(&skey, key->data, data->data) != 0)
 		return DB_DONOTINDEX;
@@ -469,8 +513,8 @@ void qdb_fin(qdb_cur_t *cur) {
 	cur->internal = NULL;
 }
 
-static inline int
-_qdb_next(void *key, void *value, qdb_cur_t *cur)
+int
+qdb_next(void *key, void *value, qdb_cur_t *cur)
 {
 	struct qdb_internal *internal;
 	ssize_t ret;
@@ -478,6 +522,7 @@ _qdb_next(void *key, void *value, qdb_cur_t *cur)
 	internal = cur->internal;
 	flags = DB_FIRST;
 
+again:
 	if (cur->flags & QH_DUP) {
 		if (cur->flags & QH_NOT_FIRST)
 			flags = DB_NEXT_DUP;
@@ -496,6 +541,9 @@ _qdb_next(void *key, void *value, qdb_cur_t *cur)
 		return 0;
 	}
 
+	if (* (unsigned *) internal->pkey.data == qdb_meta_id)
+		goto again;
+
 	if (key) {
 		memcpy(key, internal->pkey.data, internal->pkey.size);
 		memcpy(value, internal->data.data, internal->data.size);
@@ -506,18 +554,6 @@ _qdb_next(void *key, void *value, qdb_cur_t *cur)
 	memset(&internal->data, 0, sizeof(DBT));
 
 	return 1;
-}
-
-int
-qdb_next(void *key, void *value, qdb_cur_t *cur)
-{
-	int ret;
-
-	while ((ret = _qdb_next(key, value, cur))
-			&& * (unsigned *) key == qdb_meta_id)
-		;
-
-	return ret;
 }
 
 int
@@ -554,9 +590,19 @@ int qdb_drop(unsigned hd) {
 }
 
 void
-qdb_close(unsigned hd, unsigned flags) {
+_qdb_close(unsigned hd, unsigned flags) {
 	DB *db = qdb_dbs[hd];
 	db->close(db, flags);
+	qdb_dbs[hd] = NULL;
+}
+
+void
+qdb_close(unsigned hd, unsigned flags) {
+	if (qdb_meta[hd].flags & QH_THRICE) {
+		_qdb_close(hd + 2, flags);
+		_qdb_close(hd + 1, flags);
+	}
+	_qdb_close(hd, flags);
 	idm_del(&idm, hd);
 }
 

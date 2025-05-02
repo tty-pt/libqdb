@@ -174,8 +174,10 @@ enum qdb_flags {
 	/* repurpose the primary db with different types */
 	QH_REPURPOSE = 64,
 
+	/* value 128 is reserved */
+
 	/* key is two combined values */
-	QH_TWIN = 128,
+	QH_THRICE = 256,
 };
 
 /* we use these cursors for iteration */
@@ -247,12 +249,21 @@ static inline unsigned
 qdb_put(unsigned hd, void *key, void *value)
 {
 	size_t key_len, value_len;
-	unsigned id = 0;
+	unsigned id = 0, flags = qdb_meta[hd].flags;
 
 	if (key != NULL) {
 		key_len = qdb_len(hd, QDB_KEY, key);
 		if (!strcmp(qdb_type(hd, QDB_KEY), "u"))
 			id = * (unsigned *) key;
+
+		if ((flags & QH_THRICE) && (flags & QH_DUP)) {
+			key_len = qdb_len(hd + 2, QDB_KEY, key);
+			value_len = qdb_len(hd + 2, QDB_VALUE, value);
+			char buf[key_len + value_len];
+			memcpy(buf, key, key_len);
+			memcpy(buf + key_len, value, value_len);
+			return qdb_putc(hd, buf, key_len + value_len, value, value_len);
+		}
 	} else if (qdb_meta[hd].flags & QH_AINDEX) {
 		id = idm_new(&qdb_meta[hd].idm);
 		key = &id;
@@ -325,7 +336,6 @@ static inline int qdb_get(unsigned hd, void *value, void *key)
 void *qdb_pgetc(unsigned hd, size_t *len, void *key);
 
 static inline int qdb_pget(unsigned hd, void *pkey_r, void *key_r) {
-	unsigned flags = qdb_meta[hd].flags;
 	void *data;
 	size_t len;
 

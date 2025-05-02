@@ -276,6 +276,12 @@ This avoids having to have write permissions.
 > Use transaction support
 ## QH\_DUP
 > Allow duplicate values for the same key
+## QH\_REPURPOSE
+> This secondary is similar to the primary, but the key type might be of different size.
+
+This is used internally, for the most part.
+## QH\_THRICE
+> We want to have forward and reverse lookup (one primary two secondary).
 
 # Reusable indexes
 We also export some features for automatic reusable indexes.
