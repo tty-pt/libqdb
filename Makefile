@@ -1,30 +1,32 @@
 PREFIX ?= /usr/local
-LIBDIR := ${DESTDIR}${PREFIX}/lib
 debug := -fsanitize=address -fstack-protector-strong
 pwd != pwd
-libdir := ${pwd} /usr/local/lib
-LDFLAGS	+= -lqhash -ldb ${libdir:%=-L%} ${libdir:%=-Wl,-rpath,%}
+prefix := ${pwd} /usr/local
+CFLAGS := ${prefix:%=-I%/include} -g -O3 -Wall -Wextra -Wpedantic
+LDFLAGS	+= -lqhash -ldb ${prefix:%=-L%/lib} ${prefix:%=-Wl,-rpath,%/lib}
+dirs := bin lib
 
-libqhash.so: libqhash.c include/qhash.h
-	${CC} -o $@ libqhash.c -I/usr/local/include -g -O3 -fPIC -shared -Wall -Wextra -Wpedantic
+all: lib/libqhash.so bin/qhash
 
-bin: qhash
+lib/libqhash.so: libqhash.c include/qhash.h lib
+	${CC} -o $@ libqhash.c ${CFLAGS} -fPIC -shared
 
-qhash: qhash.c include/qhash.h
-	cc -o $@ qhash.c -I/usr/local/include -g -O3 ${LDFLAGS}
+bin/qhash: qhash.c include/qhash.h bin
+	cc -o $@ qhash.c ${CFLAGS} ${LDFLAGS}
 
-install: libqhash.so
+$(dirs):
+	mkdir $@ 2>/dev/null || true
+
+install: lib/libqhash.so qhash
 	install -d ${DESTDIR}${PREFIX}/lib/pkgconfig
-	install -m 644 libqhash.so ${DESTDIR}${PREFIX}/lib
+	install -m 644 lib/libqhash.so ${DESTDIR}${PREFIX}/lib
 	install -m 644 qhash.pc $(DESTDIR)${PREFIX}/lib/pkgconfig
 	install -d ${DESTDIR}${PREFIX}/include
 	install -m 644 include/qhash.h $(DESTDIR)${PREFIX}/include
-
-install-bin: qhash
 	install -d ${DESTDIR}${PREFIX}/bin
-	install -m 755 qhash $(DESTDIR)${PREFIX}/bin
+	install -m 755 bin/qhash $(DESTDIR)${PREFIX}/bin
 
 clean:
-	rm qhash libqhash.so || true
+	rm bin/qhash lib/libqhash.so || true
 
-.PHONY: all install install-bin clean
+.PHONY: all install clean

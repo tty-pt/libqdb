@@ -642,7 +642,7 @@ unsigned idm_new(struct idm *idm) {
 }
 
 void qdb_env_open(DB_ENV *env, char *path, unsigned flags) {
-	unsigned iflags = DB_CREATE | DB_INIT_MPOOL | DB_INIT_LOCK | DB_INIT_LOG | DB_THREAD;
+	unsigned iflags = DB_CREATE | DB_INIT_MPOOL | DB_INIT_LOCK | DB_THREAD;
 
 	if (flags & QH_TXN) {
 		env->set_flags(env, DB_AUTO_COMMIT, 1);
@@ -656,6 +656,7 @@ void qdb_env_open(DB_ENV *env, char *path, unsigned flags) {
 		struct stat st;
 		if (stat(path, &st) != 0)
 			mkdir(path, 0755);
+		iflags |= DB_INIT_LOG;
 	}
 
 	env->open(env, path, iflags, 0);
