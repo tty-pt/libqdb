@@ -4,7 +4,7 @@
   "description": "C lib for easy hashtable usage",
   "main": "index.js",
   "scripts": {
-    "test": "echo @tty-pt/qhash: No tests",
+    "test": "./test.sh",
     "postinstall": "make libqhash.so qhash"
   },
   "keywords": [

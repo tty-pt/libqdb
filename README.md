@@ -54,14 +54,9 @@ int qdb_get(unsigned hd, void *value, void *key);
 See how easy that makes it?
 ## qdb\_del
 ```c
-void qdb_del(unsigned hd, void *key);
+void qdb_del(unsigned hd, void *key, void *value);
 ```
-> Delete all values from a key
-## qdb\_rem
-```c
-int qdb_rem(unsigned hd, void *key, void *value);
-```
-> Delete a specific key-value pair
+> Delete a key-value pair. If value is NULL, delete all values from the key
 ## qdb\_close
 ```c
 void qdb_close(unsigned hd, unsigned flags);
@@ -158,6 +153,10 @@ void qdb_assoc(unsigned hd, unsigned link, qdb_assoc_t assoc);
 typedef void (*qdb_assoc_t)(void **data, uint32_t *len, void *key, void *value);
 ```
 > Associate a secondary database to a primary one.
+
+If you use NULL as the callback, the secondary key will be the
+same pointer as the primary, but it might be used with a different
+type setting.
 ## qdb\_cdel
 ```c
 int qdb_cdel(qdb_cur_t *cur);
@@ -272,6 +271,12 @@ This avoids having to have write permissions.
 > Use transaction support
 ## QH\_DUP
 > Allow duplicate values for the same key
+## QH\_REPURPOSE
+> This secondary is similar to the primary, but the key type might be of different size.
+
+This is used internally, for the most part.
+## QH\_THRICE
+> We want to have forward and reverse lookup (one primary two secondary).
 
 # Reusable indexes
 We also export some features for automatic reusable indexes.

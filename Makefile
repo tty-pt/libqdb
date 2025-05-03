@@ -2,7 +2,7 @@ PREFIX ?= /usr/local
 LIBDIR := ${DESTDIR}${PREFIX}/lib
 debug := -fsanitize=address -fstack-protector-strong
 pwd != pwd
-libdir := /usr/local/lib ${pwd}
+libdir := ${pwd} /usr/local/lib
 LDFLAGS	+= -lqhash -ldb ${libdir:%=-L%} ${libdir:%=-Wl,-rpath,%}
 
 libqhash.so: libqhash.c include/qhash.h

@@ -64,6 +64,7 @@ typedef size_t qdb_measure_t(void *value);
 typedef struct {
 	qdb_print_t *print;
 	qdb_measure_t *measure;
+	char *dbl;
 	size_t len;
 } qdb_type_t;
 
@@ -82,7 +83,7 @@ enum qdb_type {
 };
 
 /* associations are made using these callbacks */
-typedef void (*qdb_assoc_t)(void **data, uint32_t *len, void *key, void *value);
+typedef int (*qdb_assoc_t)(void **data, void *key, void *value);
 
 /* we store some metadata in the database to know
  * types and stuff later on */
@@ -95,9 +96,10 @@ typedef struct {
 
 /* we also have an in-memory metadata for each */
 typedef struct meta {
-	unsigned flags;
+	unsigned flags, phd;
 	qdb_assoc_t assoc;
 	struct idm idm;
+	char type_str[2][8];
 	qdb_type_t *type[2];
 } qdb_meta_t;
 
@@ -168,6 +170,14 @@ enum qdb_flags {
 
 	/* auto-index / auto-key (unsigned) */
 	QH_AINDEX = 32,
+
+	/* repurpose the primary db with different types */
+	QH_REPURPOSE = 64,
+
+	/* value 128 is reserved */
+
+	/* key is two combined values */
+	QH_THRICE = 256,
 };
 
 /* we use these cursors for iteration */
@@ -175,157 +185,6 @@ typedef struct {
 	int flags;
 	void *internal;
 } qdb_cur_t;
-
-/* open a database (specify much) */
-unsigned qdb_openc(const char *file, const char *database, int mode, unsigned flags, int type, char *key_tid, char *value_tid);
-
-/* put a key-value pair (not type aware) */
-int qdb_putc(unsigned hd, void *key, size_t key_len, void *value, size_t value_len);
-
-/* get a key or value's length */
-static inline size_t qdb_len(unsigned hd, unsigned type, void *key) {
-	qdb_type_t *mthing = qdb_meta[hd].type[type];
-	return mthing->len ? mthing->len : mthing->measure(key);
-}
-
-/* put a key-value pair (type aware) */
-static inline unsigned
-qdb_put(unsigned hd, void *key, void *value)
-{
-	size_t key_len, value_len;
-	unsigned id = 0;
-
-	if (key != NULL)
-		key_len = qdb_len(hd, QDB_KEY, key);
-	else if (qdb_meta[hd].flags & QH_AINDEX) {
-		id = idm_new(&qdb_meta[hd].idm);
-		key = &id;
-		key_len = sizeof(unsigned);
-	} else
-		qdblog_err("qdb_put NULL key without QH_AINDEX");
-
-	value_len = qdb_len(hd, QDB_VALUE, value);
-	if (qdb_putc(hd, key, key_len, value, value_len))
-		return (unsigned) qdb_meta_id;
-
-	return id;
-}
-
-/* initialize the system */
-void qdb_init(void);
-
-/* remove a specific key-value pair */
-int qdb_rem(unsigned hd, void *key, void *value);
-
-/* stop iteration early */
-void qdb_fin(qdb_cur_t *cur);
-
-/* get next iteration */
-int qdb_next(void *key, void *value, qdb_cur_t *cur);
-
-/* close a database */
-void qdb_close(unsigned hd, unsigned flags);
-
-/* sync database to disk */
-void qdb_sync(unsigned hd);
-
-/* associate two databases */
-void qdb_assoc(unsigned hd, unsigned link, qdb_assoc_t assoc);
-
-/* drop everything in a database */
-int qdb_drop(unsigned hd);
-
-/* get an item from a database (not type aware) */
-void *qdb_getc(unsigned hd, size_t *size, void *key_r, size_t key_len);
-
-/* check key's existence (not type aware) */
-static inline int qdb_existsc(unsigned hd, void *key_r, size_t key_len)
-{
-	size_t size;
-	return qdb_getc(hd, &size, key_r, key_len)
-		? 1 : 0;
-}
-
-/* check key's existence (type aware) */
-static inline int qdb_exists(unsigned hd, void *key)
-{
-	return qdb_existsc(hd, key, qdb_len(hd, QDB_KEY, key));
-}
-
-/* get a primary key from a secondary one */
-int qdb_pget(unsigned hd, void *pkey, void *key);
-
-/* start iterating */
-qdb_cur_t qdb_iter(unsigned hd, void *key);
-
-/* delete item under cursor (iteration) */
-int qdb_cdel(qdb_cur_t *cur);
-
-/* delete all values matching a key */
-static inline void qdb_del(unsigned hd, void *key) {
-	if (qdb_meta[hd].flags & QH_AINDEX)
-		idm_del(&qdb_meta[hd].idm, * (unsigned *) key);
-
-	qdb_cur_t c = qdb_iter(hd, key);
-
-	while (qdb_next(NULL, NULL, &c))
-		qdb_cdel(&c);
-}
-
-/* open a database (specify little) */
-static inline int qdb_open(char *database, char *key_tid, char *value_tid, unsigned flags) {
-	return qdb_openc(qdb_config.file, database, qdb_config.mode,
-			flags | qdb_config.flags, qdb_config.type, key_tid, value_tid);
-}
-
-/* get the first value for a given key (type aware) */
-static inline int qdb_get(unsigned hd, void *value, void *key)
-{
-	size_t size;
-	void *value_r = qdb_getc(hd, &size, key, qdb_len(hd, QDB_KEY, key));
-
-	if (!value_r)
-		return 1;
-
-	memcpy(value, value_r, size);
-	return 0;
-}
-
-/* register a type of key / value */
-static inline void
-qdb_regc(char *key, qdb_type_t *type) {
-	qdb_put(types_hd, key, &type);
-}
-
-/* the same but just give a length (for simple types) */
-static inline void
-qdb_reg(char *key, size_t len) {
-	qdb_type_t *type = (qdb_type_t *) malloc(sizeof(qdb_type_t));
-	type->measure = NULL;
-	type->print = NULL;
-	type->len = len;
-	qdb_put(types_hd, key, &type);
-}
-
-/* print a key or value */
-static inline void qdb_print(unsigned hd, unsigned type, void *thing) {
-	qdb_meta[hd].type[type]->print(thing);
-}
-
-/* TRANSACTIONS */
-
-/* create a database environment */
-static inline DB_ENV *qdb_env_create(void) {
-	DB_ENV *env;
-	db_env_create(&env, 0);
-	env->set_flags(env, DB_AUTO_COMMIT, 1);
-	env->set_lk_detect(env, DB_LOCK_OLDEST);
-	env->set_tx_max(env, 5 * 60);
-	return env;
-}
-
-/* open a database environment */
-void qdb_env_open(DB_ENV *env, char *path);
 
 /* begin a transaction */
 static inline DB_TXN *qdb_begin(void) {
@@ -365,6 +224,173 @@ static inline void qdb_abort(void) {
 	if (txn->abort(txn))
 		qdblog(LOG_ERR, "Txn abort failed\n");
 }
+
+/* open a database (specify much) */
+unsigned qdb_openc(const char *file, const char *database, int mode, unsigned flags, int type, char *key_tid, char *value_tid);
+
+/* put a key-value pair (not type aware) */
+int qdb_putc(unsigned hd, void *key, size_t key_len, void *value, size_t value_len);
+
+/* get a key or value's length */
+static inline size_t qdb_len(unsigned hd, unsigned type, void *key) {
+	if (!key)
+		return 0;
+	qdb_type_t *mthing = qdb_meta[hd].type[type];
+	return mthing->len ? mthing->len : mthing->measure(key);
+}
+
+/* get the type of a key or value */
+static inline char *qdb_type(unsigned hd, unsigned type) {
+	return qdb_meta[hd].type_str[type];
+}
+
+/* put a key-value pair (type aware) */
+static inline unsigned
+qdb_put(unsigned hd, void *key, void *value)
+{
+	size_t key_len, value_len;
+	unsigned id = 0, flags = qdb_meta[hd].flags;
+
+	if (key != NULL) {
+		key_len = qdb_len(hd, QDB_KEY, key);
+		if (!strcmp(qdb_type(hd, QDB_KEY), "u"))
+			id = * (unsigned *) key;
+
+		if ((flags & QH_THRICE) && (flags & QH_DUP)) {
+			key_len = qdb_len(hd + 2, QDB_KEY, key);
+			value_len = qdb_len(hd + 2, QDB_VALUE, value);
+			char buf[key_len + value_len];
+			memcpy(buf, key, key_len);
+			memcpy(buf + key_len, value, value_len);
+			return qdb_putc(hd, buf, key_len + value_len, value, value_len);
+		}
+	} else if (qdb_meta[hd].flags & QH_AINDEX) {
+		id = idm_new(&qdb_meta[hd].idm);
+		key = &id;
+		key_len = sizeof(unsigned);
+	} else
+		qdblog_err("qdb_put NULL key without QH_AINDEX");
+
+	value_len = qdb_len(hd, QDB_VALUE, value);
+	if (qdb_putc(hd, key, key_len, value, value_len))
+		return (unsigned) qdb_meta_id;
+
+	return id;
+}
+
+/* initialize the system */
+void qdb_init(void);
+
+/* stop iteration early */
+void qdb_fin(qdb_cur_t *cur);
+
+/* get next iteration */
+int qdb_next(void *key, void *value, qdb_cur_t *cur);
+
+/* close a database */
+void qdb_close(unsigned hd, unsigned flags);
+
+/* sync database to disk */
+void qdb_sync(unsigned hd);
+
+/* associate two databases */
+void qdb_assoc(unsigned hd, unsigned link, qdb_assoc_t assoc);
+
+/* drop everything in a database */
+int qdb_drop(unsigned hd);
+
+/* get an item from a database (not type aware) */
+void *qdb_getc(unsigned hd, size_t *size, void *key_r, size_t key_len);
+
+/* check key's existence (not type aware) */
+static inline int qdb_existsc(unsigned hd, void *key_r, size_t key_len)
+{
+	size_t size;
+	return qdb_getc(hd, &size, key_r, key_len)
+		? 1 : 0;
+}
+
+/* check key's existence (type aware) */
+static inline int qdb_exists(unsigned hd, void *key)
+{
+	return qdb_existsc(hd, key, qdb_len(hd, QDB_KEY, key));
+}
+
+/* get the first value for a given key (type aware) */
+static inline int qdb_get(unsigned hd, void *value, void *key)
+{
+	size_t size;
+	void *value_r = qdb_getc(hd, &size, key, qdb_len(hd, QDB_KEY, key));
+
+	if (!value_r)
+		return 1;
+
+	memcpy(value, value_r, size);
+	return 0;
+}
+
+/* get a primary key from a secondary one */
+void *qdb_pgetc(unsigned hd, size_t *len, void *key);
+
+static inline int qdb_pget(unsigned hd, void *pkey_r, void *key_r) {
+	void *data;
+	size_t len;
+
+	data = qdb_pgetc(hd, &len, key_r);
+	if (!data)
+		return 1;
+
+	memcpy(pkey_r, data, len);
+	return 0;
+}
+
+/* start iterating */
+qdb_cur_t qdb_iter(unsigned hd, void *key);
+
+/* delete item under cursor (iteration) */
+int qdb_cdel(qdb_cur_t *cur);
+
+/* delete key-value pair or all key's values */
+void qdb_del(unsigned hd, void *key, void *value);
+
+/* open a database (specify little) */
+static inline int qdb_open(char *database, char *key_tid, char *value_tid, unsigned flags) {
+	return qdb_openc(qdb_config.file, database, qdb_config.mode,
+			flags | qdb_config.flags, qdb_config.type, key_tid, value_tid);
+}
+
+/* register a type of key / value */
+static inline void
+qdb_regc(char *key, qdb_type_t *type) {
+	qdb_put(types_hd, key, &type);
+}
+
+/* the same but just give a length (for simple types) */
+static inline void
+qdb_reg(char *key, size_t len) {
+	qdb_type_t *type = (qdb_type_t *) malloc(sizeof(qdb_type_t));
+	type->measure = NULL;
+	type->print = NULL;
+	type->len = len;
+	type->dbl = NULL;
+	qdb_put(types_hd, key, &type);
+}
+
+/* print a key or value */
+static inline void qdb_print(unsigned hd, unsigned type, void *thing) {
+	qdb_meta[hd].type[type]->print(thing);
+}
+
+/* create a database environment */
+static inline DB_ENV *qdb_env_create(void) {
+	DB_ENV *env;
+	db_env_create(&env, 0);
+	env->set_lk_detect(env, DB_LOCK_OLDEST);
+	return env;
+}
+
+/* open a database environment */
+void qdb_env_open(DB_ENV *env, char *path, unsigned flags);
 
 /* abort a transation */
 static inline void qdb_checkpoint(unsigned kbytes, unsigned min, unsigned flags) {
