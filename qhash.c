@@ -1,6 +1,3 @@
-/* FIXME
- * lookup is not working correctly
- */
 #include "./include/qhash.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,13 +17,13 @@ unsigned reverse = 0, bail = 0;
 void
 usage(char *prog)
 {
-	fprintf(stderr, "Usage: %s [-qa ARG] [[-rl] [-Rpdg ARG] ...] file[:k:v]", prog);
+	fprintf(stderr, "Usage: %s [-qa ARG] [[-rl] [-Rpdg ARG] ...] file[[:k]:v]", prog);
 	fprintf(stderr, "    Options:\n");
 	fprintf(stderr, "        -r             reverse operation\n");
 	fprintf(stderr, "        -l             list all values\n");
 	fprintf(stderr, "        -L             list missing values\n");
-	fprintf(stderr, "        -q file[:k:v]  db to use string lookups and printing\n");
-	fprintf(stderr, "        -a file[:k:v]  db to use for reversed string lookups and printing\n");
+	fprintf(stderr, "        -q file[[:k]:v]  db to use string lookups and printing\n");
+	fprintf(stderr, "        -a file[[:k]:v]  db to use for reversed string lookups and printing\n");
 	fprintf(stderr, "        -R KEY         get random value of key (empty key for any)\n");
 	fprintf(stderr, "        -p KEY[:VAL]   put a key/value pair\n");
 	fprintf(stderr, "        -d KEY[:VAL]   delete key/value pair(s)\n");
@@ -36,7 +33,9 @@ usage(char *prog)
 	fprintf(stderr, "         u             unsigned\n");
 	fprintf(stderr, "         s             string\n");
 	fprintf(stderr, "         a             key only! unsigned with automatic index\n");
-	fprintf(stderr, "         t             key only! twin the value type and support dupes\n");
+	fprintf(stderr, "         2<base-type>  key only! allows duplicates\n");
+	fprintf(stderr, "\n");
+	fprintf(stderr, "Use '.' as the KEY for all keys!\n");
 }
 
 static inline void *rec_query(unsigned qhds, char *tbuf, char *buf, unsigned tmprev) {
@@ -112,7 +111,7 @@ inline static char *_gen_lookup(char *buf, char *str, unsigned qhds, unsigned qh
 static char *gen_lookup(char *str) {
 	char *ret, *other_buf = value_buf;
 
-	if (!str)
+	if (!str || !strcmp(str, "."))
 		return NULL;
 
 	col = strchr(str, ':');
@@ -148,13 +147,14 @@ static inline int assoc_exists(char *key_buf) {
 
 static inline void assoc_print() {
 	static char alt_buf[BUFSIZ];
+	char *buf = reverse ? value_buf : key_buf;
 	unsigned aux, aux_hd;
 	qdb_cur_t c2 = qdb_iter(ahds, NULL);
 
 	while (qdb_next(&aux, &aux_hd, &c2)) {
 		putchar(' ');
-		if (qdb_get(aux_hd + 1, alt_buf, key_buf)) {
-			printf("-1\n");
+		if (qdb_get(aux_hd + 1, alt_buf, buf)) {
+			printf("-1");
 			continue;
 		}
 		qdb_print(aux_hd, QDB_VALUE, alt_buf);
@@ -176,7 +176,7 @@ static inline void _gen_get(void) {
 static inline void gen_rand() {
 	unsigned count = 0, rand;
 	qdb_cur_t c;
-	char *iter_key = gen_lookup(strcmp(optarg, ".") ? optarg : NULL);
+	char *iter_key = gen_lookup(optarg);
 
 	c = qdb_piter(prim_hd, iter_key, reverse);
 
@@ -292,9 +292,12 @@ unsigned gen_open(char *fname, unsigned flags) {
 
 		if (!strcmp(first_col, "a"))
 			flags |= QH_AINDEX;
-		else if (!strcmp(first_col, "t"))
+		else if (*first_col == '2') {
 			flags |= QH_DUP;
-		else
+			first_col++;
+			if (*first_col)
+				key_type = first_col;
+		} else
 			key_type = first_col;
 	} else
 		flags |= QH_AINDEX;

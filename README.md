@@ -334,39 +334,80 @@ I'm going to be brief describing the provided features.
 # The cli tool
 This executable is a way to make indexes easily right from the shell.
 
-> Documentation is a Work in progress, since we're changing how it works.
-
-For help:
+It allows for a few different kinds of databases to be created, queried and changed
+easily and with flexibility. You should be able to find documentation using:
 ```sh
 qhash -?
 ```
+But we still want to give you some examples.
 
-This will you a listing of ids and pet owner names:
+First of all, there are some things you should know.
+## Initialization
+The first thing you do is to put something into a database.
+That is very easy! Look:
+```sh
+qhash -p hi a.db
+```
+
+But what about the types envolved? Well... It defaults to
+unsigned to string. With automatic indexes, so you can easily
+put a value like that. How would you do another one?
+```sh
+qhash -p 3 b.db:a:u
+```
+This specifies that you want unsigned-type values. Dandy.
+But how to specify value types? Easy again!
+Just add another colon, like a roman! They fix everything.
+```sh
+qhash -p 3 b.db:s:u # You guessed it. String keys, unsigned values.
+```
+
+## Key types
+There are some key types built-in in this first version. Here they are:
+
+ - 'a' means unsigned but with (optional) automatic indexes - that's the default.
+ - 't\<what\>' means type 'what' and possibly duplicate keys!
+ - 'u' means unsigned.
+ - 's' means string.
+
+For value types, remove 'a' and 't' from that list.
+
+## Examples
+Put a person into the owner database:
+```sh
+qhash -p Mathew owners.db # Output: 4
+```
+
+List owners!
 ```sh
 qhash -l owners.db
 ```
 
-This will put a pet owner into the database, and output his id:
+Insert pets into the pet database:
 ```sh
-qhash -p Mathew owners.db # example output: 4
+qhash -p cat -p dog pets.db # Output: 2 and 3
 ```
 
-Then insert pets into the pet database:
+Let's associate them!
 ```sh
-qhash -p cat -p dog pets.db # example output: 2 and 3
+qhash -p 4:2 -p 4:3 assoc.db:t:u
 ```
 
-And finally create a database that says that Mathew owns both:
-```sh
-qhash -m1 -p 4:2 -p 4:3 assoc.db
-```
-
-Or list all of Mathew's pets (names included):
+Let's see all of Mathew's pets (show their names):
 ```sh
 qhash -a pets.db -g4 assoc.db
 ```
 
-And now get a random pet name that corresponds to Mathew:
+Get a random one:
 ```sh
-qhash -q owners.db -a pets.db -RMathew assoc.db # example output: dog
+qhash -q owners.db -a pets.db -RMathew assoc.db
 ```
+
+## More information
+See, those **-q** and **-a** flags can be handy.
+Since with them you can print (-a) or query (-q)
+using values in another database.
+We also have a **-r** flag that can reverse the lookups.
+And more! Be sure to check the help (-?).
+
+Hope this is useful for you!
