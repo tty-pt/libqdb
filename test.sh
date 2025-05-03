@@ -1,13 +1,14 @@
 #!/bin/sh -e
 
 assert() {
-	file=$1
+	file=snap/$1.txt
 	shift
-	$@ > $file
+	"$@" > $file
+	return 0
 }
 
 assert() {
-	file=$1
+	file=snap/$1.txt
 	shift
 	echo $@ >&2
 	if "$@" | diff $file -; then
@@ -18,71 +19,67 @@ assert() {
 	fi
 }
 
-NONE=snap/5.txt
-ONE=snap/6.txt
-EMPTY=snap/1.txt
-
 rm *.db || true
-assert $EMPTY ./qhash -p 0:1 a.db:t:u
-assert snap/2.txt ./qhash -p hi -p hello b.db:a:s
-assert snap/3.txt ./qhash -l a.db
-assert snap/4.txt ./qhash -l b.db
+assert 0 ./qhash -p 0:1 a.db:t:u
+assert 01v ./qhash -p hi -p hello b.db:a:s
+assert 01 ./qhash -l a.db
+assert 1hello0hi ./qhash -l b.db
 
-assert $NONE ./qhash -g hallo b.db
-assert $ONE ./qhash -g hi b.db
-assert $NONE ./qhash -g 2 b.db
-assert $NONE ./qhash -g 0 b.db
+assert none ./qhash -g hallo b.db
+assert 0hi ./qhash -g hi b.db
+assert none ./qhash -g 2 b.db
+assert none ./qhash -g 0 b.db
 
-assert $ONE ./qhash -rg hallo b.db
-assert $ONE ./qhash -rg hi b.db
-assert $NONE ./qhash -rg 2 b.db
-assert $ONE ./qhash -rg 0 b.db
+assert 0hi ./qhash -rg hallo b.db
+assert 0hi ./qhash -rg hi b.db
+assert none ./qhash -rg 2 b.db
+assert 0hi ./qhash -rg 0 b.db
 
-assert $ONE ./qhash -q b.db -g hi b.db # 0 key
-assert $ONE ./qhash -q b.db -g hallo b.db # 0 key
-assert $NONE ./qhash -q b.db -g 2 b.db
-assert $ONE ./qhash -q b.db -g 0 b.db
+assert 0hi ./qhash -q b.db -g hi b.db # 0 key
+assert 0hi ./qhash -q b.db -g hallo b.db # 0 key
+assert none ./qhash -q b.db -g 2 b.db
+assert 0hi ./qhash -q b.db -g 0 b.db
 
-assert $ONE ./qhash -q b.db -rg hi b.db
-assert $NONE ./qhash -q b.db -rg hallo b.db
-assert $NONE ./qhash -q b.db -rg 2 b.db
-assert $NONE ./qhash -q b.db -rg 0 b.db
+assert 0hi ./qhash -q b.db -rg hi b.db
+assert none ./qhash -q b.db -rg hallo b.db
+assert none ./qhash -q b.db -rg 2 b.db
+assert none ./qhash -q b.db -rg 0 b.db
 
-assert $ONE ./qhash -q b.db -q b.db -g hi b.db
-assert $NONE ./qhash -q b.db -q b.db -g hallo b.db
-assert $NONE ./qhash -q b.db -q b.db -g 2 b.db
-assert $NONE ./qhash -q b.db -q b.db -g 0 b.db
+assert 0hi ./qhash -q b.db -q b.db -g hi b.db
+assert none ./qhash -q b.db -q b.db -g hallo b.db
+assert none ./qhash -q b.db -q b.db -g 2 b.db
+assert none ./qhash -q b.db -q b.db -g 0 b.db
 
-assert $ONE ./qhash -q b.db -q b.db -rg hi b.db
-assert $ONE ./qhash -q b.db -q b.db -rg hallo b.db
-assert $NONE ./qhash -q b.db -q b.db -rg 2 b.db
-assert $ONE ./qhash -q b.db -q b.db -rg 0 b.db
+assert 0hi ./qhash -q b.db -q b.db -rg hi b.db
+assert 0hi ./qhash -q b.db -q b.db -rg hallo b.db
+assert none ./qhash -q b.db -q b.db -rg 2 b.db
+assert 0hi ./qhash -q b.db -q b.db -rg 0 b.db
 
-assert $EMPTY ./qhash -p 'hi:Hi how are you' s.db:s
-assert snap/hi.txt ./qhash -l s.db
-assert $EMPTY ./qhash -p 'hi2:Hi how are you 2' s.db
-assert $EMPTY ./qhash -rd 'hi2' s.db
-assert snap/hi.txt ./qhash -l s.db
-assert $EMPTY ./qhash -p 'hi2:Hi how are you 2' s.db
-assert $EMPTY ./qhash -d 'Hi how are you 2' s.db
-assert snap/hi.txt ./qhash -l s.db
+assert hikey ./qhash -p 'hi:Hi how are you' s.db:s
+assert hi ./qhash -l s.db
+assert hi2key ./qhash -p 'hi2:Hi how are you 2' s.db
+assert empty ./qhash -rd 'hi2' s.db
+assert hi ./qhash -l s.db
+assert hi2key ./qhash -p 'hi2:Hi how are you 2' s.db
+assert empty ./qhash -d 'Hi how are you 2' s.db
+assert hi ./qhash -l s.db
 
-assert $EMPTY ./qhash -p 5:9 -p 0:1 c.db:t:u
-assert snap/missing.txt ./qhash -q a.db -L c.db
-assert $EMPTY ./qhash -q c.db -L a.db
-assert snap/3.txt ./qhash -q c.db -rL a.db
-assert $EMPTY ./qhash -p 5:9 a.db
-assert $EMPTY ./qhash -d 9 a.db
-assert snap/3.txt ./qhash -l a.db
-assert $EMPTY ./qhash -p 5:9 a.db
-assert $EMPTY ./qhash -d 5:9 a.db
-assert snap/3.txt ./qhash -l a.db
-assert $EMPTY ./qhash -p 5:9 a.db
-assert $EMPTY ./qhash -rd 9:5 a.db
-assert snap/3.txt ./qhash -l a.db
-assert $EMPTY ./qhash -p 5:9 -p 5:8 a.db
-assert $EMPTY ./qhash -rd 5 a.db
-assert snap/3.txt ./qhash -l a.db
+assert 50 ./qhash -p 5:9 -p 0:1 c.db:t:u
+assert missing ./qhash -q a.db -L c.db
+assert empty ./qhash -q c.db -L a.db
+assert 01 ./qhash -q c.db -rL a.db
+assert 5 ./qhash -p 5:9 a.db
+assert empty ./qhash -d 9 a.db
+assert 01 ./qhash -l a.db
+assert 5 ./qhash -p 5:9 a.db
+assert empty ./qhash -d 5:9 a.db
+assert 01 ./qhash -l a.db
+assert 5 ./qhash -p 5:9 a.db
+assert empty ./qhash -rd 9:5 a.db
+assert 01 ./qhash -l a.db
+assert 55 ./qhash -p 5:9 -p 5:8 a.db
+assert empty ./qhash -rd 5 a.db
+assert 01 ./qhash -l a.db
 
 # TODO test associative printing (normal and reverse)
 # TODO test bail

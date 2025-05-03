@@ -281,9 +281,6 @@ qdb_put(unsigned hd, void *key, void *value)
 /* initialize the system */
 void qdb_init(void);
 
-/* remove a specific key-value pair */
-int qdb_rem(unsigned hd, void *key, void *value);
-
 /* stop iteration early */
 void qdb_fin(qdb_cur_t *cur);
 
@@ -353,18 +350,8 @@ qdb_cur_t qdb_iter(unsigned hd, void *key);
 /* delete item under cursor (iteration) */
 int qdb_cdel(qdb_cur_t *cur);
 
-/* delete all values matching a key */
-static inline void qdb_del(unsigned hd, void *key) {
-	qdb_meta_t *meta = &qdb_meta[hd];
-
-	if (meta->flags & QH_AINDEX)
-		idm_del(&meta->idm, * (unsigned *) key);
-
-	qdb_cur_t c = qdb_iter(hd, key);
-
-	while (qdb_next(NULL, NULL, &c))
-		qdb_cdel(&c);
-}
+/* delete key-value pair or all key's values */
+void qdb_del(unsigned hd, void *key, void *value);
 
 /* open a database (specify little) */
 static inline int qdb_open(char *database, char *key_tid, char *value_tid, unsigned flags) {

@@ -54,14 +54,9 @@ int qdb_get(unsigned hd, void *value, void *key);
 See how easy that makes it?
 ## qdb\_del
 ```c
-void qdb_del(unsigned hd, void *key);
+void qdb_del(unsigned hd, void *key, void *value);
 ```
-> Delete all values from a key
-## qdb\_rem
-```c
-int qdb_rem(unsigned hd, void *key, void *value);
-```
-> Delete a specific key-value pair
+> Delete a key-value pair. If value is NULL, delete all values from the key
 ## qdb\_close
 ```c
 void qdb_close(unsigned hd, unsigned flags);

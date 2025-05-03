@@ -130,12 +130,13 @@ static char *gen_lookup(char *str) {
 }
 
 static inline void gen_del() {
-	char *iter_key = gen_lookup(optarg);
+	char *key = NULL;
+	gen_lookup(optarg);
 
-	if (!col)
-		qdb_del(prim_hd + 1 + !reverse, value_buf);
-	else
-		qdb_rem(prim_hd + 1 + reverse, key_buf, value_buf);
+	if (col)
+		key = key_buf;
+
+	qdb_del(prim_hd + 1 + !reverse, value_buf, key);
 }
 
 static inline int assoc_exists(char *key_buf) {
@@ -249,16 +250,15 @@ static void gen_list() {
 }
 
 static inline void gen_put() {
+	unsigned id;
+	char *key;
 	gen_lookup(optarg);
 	unsigned flags = qdb_meta[prim_hd].flags;
 
-	if (flags & QH_AINDEX) {
-		char *key = col ? key_buf : NULL;
-		unsigned id = qdb_put(prim_hd, key, value_buf);
-		qdb_print(prim_hd + 1, QDB_KEY, &id);
-		putchar('\n');
-	} else
-		qdb_put(prim_hd, key_buf, value_buf);
+	key = col ? key_buf : NULL;
+	id = qdb_put(prim_hd, key, value_buf);
+	qdb_print(prim_hd + 1, QDB_KEY, key ? key : (char *) &id);
+	putchar('\n');
 }
 
 static inline void gen_list_missing() {

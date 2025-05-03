@@ -421,7 +421,7 @@ int primary_get(DBC *dbc, DBT *key __attribute__((unused)), DBT *pkey, DBT *data
 	return dbc->get(dbc, pkey, data, flags);
 }
 
-int
+static inline int
 qdb_rem(unsigned hd, void *key_data, void *value_data)
 {
 	DB *db = qdb_dbs[hd];
@@ -471,6 +471,22 @@ qdb_rem(unsigned hd, void *key_data, void *value_data)
 	return 0;
 }
 
+void qdb_del(unsigned hd, void *key, void *value) {
+	if (value != NULL) {
+		qdb_rem(hd, key, value);
+		return;
+	}
+
+	qdb_meta_t *meta = &qdb_meta[hd];
+
+	if (meta->flags & QH_AINDEX)
+		idm_del(&meta->idm, * (unsigned *) key);
+
+	qdb_cur_t c = qdb_iter(hd, key);
+
+	while (qdb_next(NULL, NULL, &c))
+		qdb_cdel(&c);
+}
 struct qdb_internal {
 	unsigned hd;
 	DBT data, key, pkey;
