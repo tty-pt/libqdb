@@ -43,25 +43,23 @@ static inline void *rec_query(unsigned qhds, char *tbuf, char *buf, unsigned tmp
 	tmprev = (qhds_n & 1) == tmprev;
 	qdb_cur_t c2 = qdb_iter(qhds, NULL);
 	struct idml rqs = idml_init();
-	unsigned aux, hd = prim_hd + 1 + !reverse, aux_hd;
+	unsigned aux, aux_hd;
 	char *aux2;
 
-	char *lktype = qdb_type(hd, QDB_KEY);
+	char *lktype = qdb_type(prim_hd, QDB_KEY | !reverse);
 
 	while (qdb_next(&aux, &aux_hd, &c2)) {
-		hd = aux_hd + 1 + tmprev;
-		if (strcmp(qdb_type(hd, QDB_VALUE), lktype))
+		if (strcmp(qdb_type(aux_hd, QDB_VALUE | tmprev), lktype))
 			tmprev = !tmprev;
-		hd = aux_hd + 1 + tmprev;
-		if (strcmp(qdb_type(hd, QDB_VALUE), lktype)) {
+		if (strcmp(qdb_type(aux_hd, QDB_VALUE | tmprev), lktype)) {
 			// TODO free idml
 			idml_drop(&rqs);
 			fprintf(stderr, "Invalid query sequence\n");
 			qdb_fin(&c2);
 			return NULL;
 		}
-		lktype = qdb_type(hd, QDB_KEY);
-		idml_push(&rqs, hd);
+		lktype = qdb_type(aux_hd, QDB_KEY | tmprev);
+		idml_push(&rqs, aux_hd + 1 + tmprev);
 	}
 
 	while ((aux = idml_pop(&rqs)) != (unsigned) -1) {
@@ -80,11 +78,11 @@ static inline void *rec_query(unsigned qhds, char *tbuf, char *buf, unsigned tmp
 static inline int gen_cond() {
 	qdb_cur_t c = qdb_iter(qhds, NULL);
 	unsigned aux, rev = !reverse, aux_hd;
-	char *type = qdb_type(prim_hd + 1 + rev, QDB_KEY);
+	char *type = qdb_type(prim_hd, QDB_KEY | rev);
 
 	while (qdb_next(&aux, &aux_hd, &c)) {
 		rev = !rev;
-		type = qdb_type(aux_hd + 1 + rev, QDB_KEY);
+		type = qdb_type(aux_hd, QDB_KEY | rev);
 	}
 
 	return !strcmp(type, "s");
@@ -154,13 +152,12 @@ static inline void assoc_print() {
 	qdb_cur_t c2 = qdb_iter(ahds, NULL);
 
 	while (qdb_next(&aux, &aux_hd, &c2)) {
-		unsigned hd = aux_hd + 1;
 		putchar(' ');
-		if (qdb_get(hd, alt_buf, key_buf)) {
+		if (qdb_get(aux_hd + 1, alt_buf, key_buf)) {
 			printf("-1\n");
 			continue;
 		}
-		qdb_print(hd, QDB_VALUE, alt_buf);
+		qdb_print(aux_hd, QDB_VALUE, alt_buf);
 		if (bail) {
 			qdb_fin(&c2);
 			break;
@@ -169,10 +166,9 @@ static inline void assoc_print() {
 }
 
 static inline void _gen_get(void) {
-	unsigned hd = prim_hd + 1;
-	qdb_print(hd, QDB_KEY, key_buf);
+	qdb_print(prim_hd, QDB_KEY, key_buf);
 	putchar(' ');
-	qdb_print(hd, QDB_VALUE, value_buf);
+	qdb_print(prim_hd, QDB_VALUE, value_buf);
 	assoc_print();
 	printf("\n");
 }
@@ -182,7 +178,7 @@ static inline void gen_rand() {
 	qdb_cur_t c;
 	char *iter_key = gen_lookup(strcmp(optarg, ".") ? optarg : NULL);
 
-	c = qdb_iter(prim_hd + 1 + !reverse, iter_key);
+	c = qdb_piter(prim_hd, iter_key, reverse);
 
 	while (qdb_next((unsigned *) key_buf, value_buf, &c))
 		if (assoc_exists(key_buf))
@@ -194,9 +190,7 @@ static inline void gen_rand() {
 	}
 
 	rand = random() % count;
-	unsigned hd = prim_hd + 1 + !reverse;
-
-	c = qdb_iter(hd, iter_key);
+	c = qdb_piter(prim_hd, iter_key, reverse);
 
 	while (qdb_next((unsigned *) key_buf, value_buf, &c))
 		if (!assoc_exists(key_buf))
@@ -219,9 +213,7 @@ static void gen_get(char *str) {
 		return;
 	}
 
-	unsigned hd = prim_hd + 1 + !reverse;
-
-	c = qdb_iter(hd, iter_key);
+	c = qdb_piter(prim_hd, iter_key, reverse);
 
 	while (qdb_next(key_buf, value_buf, &c))
 		if (assoc_exists(key_buf)) {
@@ -240,8 +232,7 @@ static void gen_list() {
 	gen_lookup(NULL);
 	cond = gen_cond();
 
-	unsigned hd = prim_hd + 1 + !reverse;
-	c = qdb_iter(hd, NULL);
+	c = qdb_piter(prim_hd, NULL, reverse);
 
 	while (qdb_next(key_buf, value_buf, &c)) {
 		rec_query(qhds, key_buf, value_buf, !cond);
@@ -253,11 +244,10 @@ static inline void gen_put() {
 	unsigned id;
 	char *key;
 	gen_lookup(optarg);
-	unsigned flags = qdb_meta[prim_hd].flags;
 
 	key = col ? key_buf : NULL;
 	id = qdb_put(prim_hd, key, value_buf);
-	qdb_print(prim_hd + 1, QDB_KEY, key ? key : (char *) &id);
+	qdb_print(prim_hd, QDB_KEY, key ? key : (char *) &id);
 	putchar('\n');
 }
 
@@ -271,8 +261,7 @@ static inline void gen_list_missing() {
 		return;
 	}
 
-	unsigned phd = prim_hd + 1 + !reverse;
-	c = qdb_iter(phd, NULL);
+	c = qdb_piter(prim_hd, NULL, reverse);
 	while (qdb_next((unsigned *) key_buf, value_buf, &c)) {
 		qdb_cur_t c2 = qdb_iter(qhds, NULL);
 

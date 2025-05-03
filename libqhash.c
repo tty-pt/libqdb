@@ -9,7 +9,11 @@
 #define QDB_NOT_FOUND NULL
 
 enum {
-	QH_NOT_FIRST = 1, // internal iteration flag
+	/* this is used for iteration */
+	QH_NOT_FIRST = 1,
+
+	/* repurpose the primary db with different types */
+	QH_REPURPOSE = 64, // internal iteration flag
 };
 
 qdb_meta_t qdb_meta[QDB_DBS_MAX];
@@ -174,7 +178,7 @@ qdb_init(void) {
 
 	memset(qdb_meta, 0, sizeof(qdb_meta));
 	qdb_meta[0].type[QDB_KEY] = &qdb_ptr;
-	qdb_meta[0].type[QDB_VALUE] = &qdb_unsigned;
+	qdb_meta[0].type[QDB_VALUE >> 1] = &qdb_unsigned;
 
 	if (db_create(&qdb_dbs[types_hd], NULL, 0))
 		qdblog_err("qdb_init: db_create types");
@@ -183,7 +187,7 @@ qdb_init(void) {
 		qdblog_err("qdb_init: open types");
 
 	qdb_meta[types_hd].type[QDB_KEY] = &qdb_string;
-	qdb_meta[types_hd].type[QDB_VALUE] = &qdb_ptr;
+	qdb_meta[types_hd].type[QDB_VALUE >> 1] = &qdb_ptr;
 	qdb_regc("s", &qdb_string);
 	qdb_regc("u", &qdb_unsigned);
 	qdb_reg("p", sizeof(void *));
@@ -268,11 +272,11 @@ _qdb_openc(const char *file, const char *database, int mode, unsigned flags, int
 
 out:
 	strcpy(qdb_meta[id].type_str[QDB_KEY], key_tid);
-	strcpy(qdb_meta[id].type_str[QDB_VALUE], value_tid);
+	strcpy(qdb_meta[id].type_str[QDB_VALUE >> 1], value_tid);
 	qdb_meta[id].phd = qdb_meta_id;
 	qdb_meta[id].flags = flags;
 	qdb_meta[id].type[QDB_KEY] = key_type;
-	qdb_meta[id].type[QDB_VALUE] = value_type;
+	qdb_meta[id].type[QDB_VALUE >> 1] = value_type;
 
 #if 0
 	fprintf(stderr, "open %u %s %s %u %s %s\n",

@@ -154,9 +154,7 @@ typedef void (*qdb_assoc_t)(void **data, uint32_t *len, void *key, void *value);
 ```
 > Associate a secondary database to a primary one.
 
-If you use NULL as the callback, the secondary key will be the
-same pointer as the primary, but it might be used with a different
-type setting.
+If you use NULL as the callback, a simple mapping of the primary's key will be done.
 ## qdb\_cdel
 ```c
 int qdb_cdel(qdb_cur_t *cur);
@@ -181,6 +179,12 @@ int qdb_existsc(unsigned hd, void *key, size_t key_len)
 ```
 > A low-level way to check if a key exists. Not type-aware.
 
+## qdb\_piter
+```c
+qdb_cur_t qdb_piter(unsigned hd, void *key, unsigned reverse);
+```
+> Just a little helper to iterate THRICE databases.
+
 ## qdb\_len
 ```c
 void qdb_len(unsigned hd, unsigned type, void *thing);
@@ -192,6 +196,9 @@ void qdb_len(unsigned hd, unsigned type, void *thing);
 void qdb_print(unsigned hd, unsigned type, void *thing);
 ```
 > Print a key or a value
+
+Here and when checking types for THRICE, you might use the
+least significant bit or QDB\_REVERSE to check the inverse.
 
 # Logging
 ```c
@@ -271,10 +278,6 @@ This avoids having to have write permissions.
 > Use transaction support
 ## QH\_DUP
 > Allow duplicate values for the same key
-## QH\_REPURPOSE
-> This secondary is similar to the primary, but the key type might be of different size.
-
-This is used internally, for the most part.
 ## QH\_THRICE
 > We want to have forward and reverse lookup (one primary two secondary).
 

@@ -79,7 +79,8 @@ struct idm {
 
 enum qdb_type {
 	QDB_KEY = 0,
-	QDB_VALUE = 1,
+	QDB_VALUE = 2,
+	QDB_REVERSE = 1,
 };
 
 /* associations are made using these callbacks */
@@ -156,6 +157,8 @@ unsigned idm_new(struct idm *idm);
 
 /* some flags that are useful for us */
 enum qdb_flags {
+	/* value 1 is reserved as an internal flag */
+
 	/* allows duplicate keys */
 	QH_DUP = 2,
 
@@ -171,10 +174,7 @@ enum qdb_flags {
 	/* auto-index / auto-key (unsigned) */
 	QH_AINDEX = 32,
 
-	/* repurpose the primary db with different types */
-	QH_REPURPOSE = 64,
-
-	/* value 128 is reserved */
+	/* values 64 and 128 are reserved for the future */
 
 	/* key is two combined values */
 	QH_THRICE = 256,
@@ -235,12 +235,19 @@ int qdb_putc(unsigned hd, void *key, size_t key_len, void *value, size_t value_l
 static inline size_t qdb_len(unsigned hd, unsigned type, void *key) {
 	if (!key)
 		return 0;
+	type >>= 1;
 	qdb_type_t *mthing = qdb_meta[hd].type[type];
 	return mthing->len ? mthing->len : mthing->measure(key);
 }
 
 /* get the type of a key or value */
 static inline char *qdb_type(unsigned hd, unsigned type) {
+	unsigned otype = type;
+	type >>= 1;
+	if (otype & QDB_REVERSE)
+		type = !type;
+	if (qdb_meta[hd].flags & QH_THRICE)
+		hd ++;
 	return qdb_meta[hd].type_str[type];
 }
 
@@ -347,6 +354,14 @@ static inline int qdb_pget(unsigned hd, void *pkey_r, void *key_r) {
 /* start iterating */
 qdb_cur_t qdb_iter(unsigned hd, void *key);
 
+inline static
+qdb_cur_t qdb_piter(unsigned hd, void *key, unsigned reverse) {
+	if (!(qdb_meta[hd].flags & QH_THRICE))
+		qdblog_err("Database is not THRICE");
+
+	return qdb_iter(hd + 1 + !reverse, key);
+}
+
 /* delete item under cursor (iteration) */
 int qdb_cdel(qdb_cur_t *cur);
 
@@ -378,6 +393,12 @@ qdb_reg(char *key, size_t len) {
 
 /* print a key or value */
 static inline void qdb_print(unsigned hd, unsigned type, void *thing) {
+	unsigned otype = type;
+	type >>= 1;
+	if (otype & QDB_REVERSE)
+		type = !type;
+	if (qdb_meta[hd].flags & QH_THRICE)
+		hd ++;
 	qdb_meta[hd].type[type]->print(thing);
 }
 
