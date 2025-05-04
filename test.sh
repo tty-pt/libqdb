@@ -1,6 +1,6 @@
 #!/bin/sh -e
 
-qdb=./bin/qhash
+qdb=./bin/qdb
 
 assert() {
 	file=snap/$1.txt

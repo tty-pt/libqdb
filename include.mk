@@ -1,4 +1,4 @@
-@tty-pt/qhash-bin := qhash
-@tty-pt/qhash-lib := libqhash.so
-npm-qhash := @tty-pt/qhash
-npm-libqhash.so := @tty-pt/qhash
+@tty-pt/qdb-bin := qdb
+@tty-pt/qdb-lib := libqdb.so
+npm-qdb := @tty-pt/qdb
+npm-libqdb.so := @tty-pt/qdb

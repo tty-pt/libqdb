@@ -1,7 +1,7 @@
 {
-  "name": "@tty-pt/qhash",
-  "version": "0.8.5",
-  "description": "C lib for easy hashtable usage",
+  "name": "@tty-pt/qdb",
+  "version": "0.0.2",
+  "description": "C lib for easy database usage",
   "main": "index.js",
   "scripts": {
     "test": "./test.sh",
@@ -14,7 +14,7 @@
   "license": "BSD-3-Clause",
   "files": [
     "*.c",
-    "qhash.pc",
+    "qdb.pc",
     "include",
     "include.mk",
     "Makefile"
