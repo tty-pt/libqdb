@@ -211,10 +211,10 @@ _qdb_openc(const char *file, const char *database, int mode, unsigned flags, int
 	qdb_type_t *key_type = NULL, *value_type = NULL;
 
 	if (qdb_get(types_hd, &key_type, key_tid))
-		qdblog_err("qdb_open: key type was not registered");
+		qdblog_err("qdb_openc: key type was not registered");
 
 	if (qdb_get(types_hd, &value_type, value_tid))
-		qdblog_err("qdb_open: value type was not registered");
+		qdblog_err("qdb_openc: value type was not registered");
 
 	qdb_first = 0;
 	id = idm_new(&idm);
@@ -279,9 +279,9 @@ out:
 	qdb_meta[id].type[QDB_VALUE >> 1] = value_type;
 
 #if 0
-	fprintf(stderr, "open %u %s %s %u %s %s\n",
+	fprintf(stderr, "qdb_openc %u %s %s %u %s %s %u %u\n",
 			id, file, database,
-			flags, key_tid, value_tid);
+			flags, key_tid, value_tid, flags, dbflags);
 #endif
 
 	return id;
@@ -309,6 +309,7 @@ qdb_openc(const char *file, const char *database, int mode, unsigned flags, int 
 
 	snprintf(buf, sizeof(buf), "%sphd", database);
 	unsigned phd = _qdb_openc(file, buf, mode, flags, DB_HASH, key_tid, value_tid);
+	unsigned read_only = flags & QH_RDONLY;
 
 	qdb_smeta_t *smeta = qdb_getc(phd, &len, &qdb_meta_id, sizeof(qdb_meta_id));
 	key_tid = smeta->key;
@@ -316,6 +317,8 @@ qdb_openc(const char *file, const char *database, int mode, unsigned flags, int 
 	flags = smeta->flags;
 	flags &= ~(QH_THRICE | QH_AINDEX);
 	flags |= QH_DUP | QH_SEC;
+	if (read_only)
+		flags |= QH_RDONLY;
 
 	// for secondaries, we don't need dbl keys
 	if (smeta->flags & QH_DUP)

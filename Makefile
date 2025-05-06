@@ -17,7 +17,7 @@ bin/qdb: qdb.c include/qdb.h bin
 $(dirs):
 	mkdir $@ 2>/dev/null || true
 
-install: lib/libqdb.so qdb
+install: lib/libqdb.so bin/qdb
 	install -d ${DESTDIR}${PREFIX}/lib/pkgconfig
 	install -m 644 lib/libqdb.so ${DESTDIR}${PREFIX}/lib
 	install -m 644 qdb.pc $(DESTDIR)${PREFIX}/lib/pkgconfig

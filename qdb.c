@@ -19,21 +19,21 @@ usage(char *prog)
 {
 	fprintf(stderr, "Usage: %s [-qa ARG] [[-rl] [-Rpdg ARG] ...] file[[:k]:v]", prog);
 	fprintf(stderr, "    Options:\n");
-	fprintf(stderr, "        -r             reverse operation\n");
-	fprintf(stderr, "        -l             list all values\n");
-	fprintf(stderr, "        -L             list missing values\n");
-	fprintf(stderr, "        -q file[[:k]:v]  db to use string lookups and printing\n");
-	fprintf(stderr, "        -a file[[:k]:v]  db to use for reversed string lookups and printing\n");
-	fprintf(stderr, "        -R KEY         get random value of key (empty key for any)\n");
-	fprintf(stderr, "        -p KEY[:VAL]   put a key/value pair\n");
-	fprintf(stderr, "        -d KEY[:VAL]   delete key/value pair(s)\n");
-	fprintf(stderr, "        -g KEY         get value(s) of a key\n");
-	fprintf(stderr, "        -x             when printing associations, bail on first result\n");
+	fprintf(stderr, "        -r               reverse operation\n");
+	fprintf(stderr, "        -l               list all values\n");
+	fprintf(stderr, "        -L               list missing values\n");
+	fprintf(stderr, "        -q file[:k[:v]]  db to use string lookups and printing\n");
+	fprintf(stderr, "        -a file[:k[:v]]  db to use for reversed string lookups and printing\n");
+	fprintf(stderr, "        -R KEY           get random value of key (empty key for any)\n");
+	fprintf(stderr, "        -p KEY[:VAL]     put a key/value pair\n");
+	fprintf(stderr, "        -d KEY[:VAL]     delete key/value pair(s)\n");
+	fprintf(stderr, "        -g KEY           get value(s) of a key\n");
+	fprintf(stderr, "        -x               when printing associations, bail on first result\n");
 	fprintf(stderr, "    'k' and 'v' are key and value types. Supported values:\n");
-	fprintf(stderr, "         u             unsigned\n");
-	fprintf(stderr, "         s             string\n");
-	fprintf(stderr, "         a             key only! unsigned with automatic index\n");
-	fprintf(stderr, "         2<base-type>  key only! allows duplicates\n");
+	fprintf(stderr, "         u               unsigned\n");
+	fprintf(stderr, "         s               string\n");
+	fprintf(stderr, "         a               key only! unsigned with automatic index\n");
+	fprintf(stderr, "         2<base-type>    key only! allows duplicates\n");
 	fprintf(stderr, "\n");
 	fprintf(stderr, "Use '.' as the KEY for all keys!\n");
 }
