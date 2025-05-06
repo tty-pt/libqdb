@@ -107,7 +107,7 @@ typedef struct meta {
 extern qdb_meta_t qdb_meta[QDB_DBS_MAX];
 
 extern qdb_type_t qdb_string, qdb_unsigned;
-extern unsigned types_hd, qdb_meta_id;
+extern unsigned types_hd, qdb_meta_id, qdb_min;
 
 /* we have this config object mostly to avoid having
  * to specify much when opening databases */

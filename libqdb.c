@@ -18,7 +18,7 @@ enum {
 
 qdb_meta_t qdb_meta[QDB_DBS_MAX];
 static DB *qdb_dbs[QDB_DBS_MAX];
-unsigned types_hd = QDB_DBS_MAX - 1, qdb_meta_id = -2;
+unsigned types_hd = QDB_DBS_MAX - 1, qdb_meta_id = -2, qdb_min = 0;
 struct txnl txnl_empty;
 
 struct qdb_config qdb_config = {
@@ -218,6 +218,7 @@ _qdb_openc(const char *file, const char *database, int mode, unsigned flags, int
 
 	qdb_first = 0;
 	id = idm_new(&idm);
+	id += qdb_min;
 
 	if (db_create(&qdb_dbs[id], qdb_config.env, 0))
 		qdblog_err("qdb_openc: db_create");
