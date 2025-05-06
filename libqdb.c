@@ -18,7 +18,7 @@ enum {
 
 qdb_meta_t qdb_meta[QDB_DBS_MAX];
 static DB *qdb_dbs[QDB_DBS_MAX];
-unsigned types_hd = QDB_DBS_MAX - 1, qdb_meta_id = -2, qdb_min = 0;
+unsigned types_hd = QDB_DBS_MAX - 1, qdb_meta_id = QDB_NOTFOUND, qdb_min = 0;
 struct txnl txnl_empty;
 
 struct qdb_config qdb_config = {
@@ -374,7 +374,7 @@ map_assoc(DB *sec, const DBT *key, const DBT *data, DBT *result)
 	unsigned hd;
 	void *skey;
 
-	if (* (unsigned *) key->data == (unsigned) -2)
+	if (* (unsigned *) key->data == QDB_NOTFOUND)
 		return DB_DONOTINDEX;
 
 	if (qdb_get(0, &hd, &sec)) {
@@ -468,17 +468,16 @@ qdb_rem(unsigned hd, void *key_data, void *value_data)
 		if (!memcmp(pkey.data, &qdb_meta_id, sizeof(qdb_meta_id)))
 			continue;
 
-		break;
+		ret = cursor->del(cursor, 0);
 	}
-
-	ret = cursor->del(cursor, 0);
 
 	cursor->close(cursor);
 	if (ret)
 		qdblog(LOG_ERR, "qdb_rem: %s", db_strerror(ret));
-	return 0;
+	return ret;
 }
 
+// FIXME this should return a status code
 void qdb_del(unsigned hd, void *key, void *value) {
 	if (value != NULL) {
 		qdb_rem(hd, key, value);

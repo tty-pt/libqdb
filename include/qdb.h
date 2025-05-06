@@ -15,6 +15,8 @@
 #include <db.h>
 #endif
 
+#define QDB_NOTFOUND ((unsigned) -1)
+
 #define FILO(name, TYPE, INVALID) \
 	struct name ## _item { \
 		TYPE value; \
