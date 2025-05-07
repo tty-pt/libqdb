@@ -111,7 +111,7 @@ qdb_putc(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len
 			: NULL, &key, &data, 0);
 
 	if (ret && (ret != DB_KEYEXIST || !dupes))
-		qdblog(LOG_WARNING, "qdb_putc");
+		qdblog(LOG_WARNING, "qdb_putc\n");
 	return ret;
 }
 
@@ -209,6 +209,9 @@ _qdb_openc(const char *file, const char *database, int mode, unsigned flags, int
 	DB_TXN *txn = NULL; // local transaction just for open
 
 	qdb_type_t *key_type = NULL, *value_type = NULL;
+
+	if ((flags & QH_AINDEX) && strcmp(key_tid, "u"))
+		qdblog_err("qdb_openc: AINDEX without 'u' key");
 
 	if (qdb_get(types_hd, &key_type, key_tid))
 		qdblog_err("qdb_openc: key type was not registered");
@@ -435,7 +438,7 @@ qdb_rem(unsigned hd, void *key_data, void *value_data)
 	DB *db = qdb_dbs[hd];
 	DBT key, data, pkey;
 	DBC *cursor;
-	int ret, flags = DB_SET;
+	int ret;
 
 	qdb_meta_t *meta = &qdb_meta[hd];
 
@@ -443,7 +446,7 @@ qdb_rem(unsigned hd, void *key_data, void *value_data)
 					? txnl_peek(&qdb_config.txnl) : NULL,
 					&cursor, 0)) != 0)
 	{
-		qdblog(LOG_ERR, "cursor: %s", db_strerror(ret));
+		qdblog(LOG_ERR, "cursor: %s\n", db_strerror(ret));
 		return ret;
 	}
 
@@ -462,18 +465,15 @@ qdb_rem(unsigned hd, void *key_data, void *value_data)
 		? cursor->pget
 		: primary_get;
 
-	while (!(ret = get(cursor, &key, &pkey, &data, flags))) {
-		flags = DB_NEXT_DUP;
-
-		if (!memcmp(pkey.data, &qdb_meta_id, sizeof(qdb_meta_id)))
-			continue;
-
+	if (!(ret = get(cursor, &key, &pkey, &data, DB_GET_BOTH)))
 		ret = cursor->del(cursor, 0);
-	}
 
 	cursor->close(cursor);
 	if (ret)
-		qdblog(LOG_ERR, "qdb_rem: %s", db_strerror(ret));
+		qdblog(LOG_ERR, "qdb_rem: %s\n", db_strerror(ret));
+	else if ((meta->flags & QH_AINDEX) && !qdb_exists(hd, key_data))
+		idm_del(&meta->idm, * (unsigned *) key_data);
+
 	return ret;
 }
 
@@ -557,7 +557,7 @@ again:
 
 	if ((ret = internal->get(internal->cursor, &internal->key, &internal->pkey, &internal->data, flags))) {
 		if (ret != DB_NOTFOUND)
-			qdblog(LOG_ERR, "qdb_next: %u %d %s", internal->hd, cur->flags, db_strerror(ret));
+			qdblog(LOG_ERR, "qdb_next: %u %d %s\n", internal->hd, cur->flags, db_strerror(ret));
 		internal->cursor->close(internal->cursor);
 		free(internal);
 		cur->internal = NULL;
