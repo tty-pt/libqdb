@@ -208,11 +208,6 @@ static void gen_get(char *str) {
 	qdb_cur_t c;
 	unsigned nonce = 1;
 
-	if (!iter_key) {
-		printf("-1\n");
-		return;
-	}
-
 	c = qdb_piter(prim_hd, iter_key, reverse);
 
 	while (qdb_next(key_buf, value_buf, &c))

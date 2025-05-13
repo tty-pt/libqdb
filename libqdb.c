@@ -211,20 +211,20 @@ _qdb_openc(const char *file, const char *database, int mode, unsigned flags, int
 	qdb_type_t *key_type = NULL, *value_type = NULL;
 
 	if ((flags & QH_AINDEX) && strcmp(key_tid, "u"))
-		qdblog_err("qdb_openc: AINDEX without 'u' key");
+		qdblog_err("qdb_openc: AINDEX without 'u' key\n");
 
 	if (qdb_get(types_hd, &key_type, key_tid))
-		qdblog_err("qdb_openc: key type was not registered");
+		qdblog_err("qdb_openc: key type was not registered\n");
 
 	if (qdb_get(types_hd, &value_type, value_tid))
-		qdblog_err("qdb_openc: value type was not registered");
+		qdblog_err("qdb_openc: value type was not registered\n");
 
 	qdb_first = 0;
 	id = idm_new(&idm);
 	id += qdb_min;
 
 	if (db_create(&qdb_dbs[id], qdb_config.env, 0))
-		qdblog_err("qdb_openc: db_create");
+		qdblog_err("qdb_openc: db_create\n");
 
 	// this is needed for associations
 	db = qdb_dbs[id];
@@ -232,14 +232,14 @@ _qdb_openc(const char *file, const char *database, int mode, unsigned flags, int
 
 	if (flags & QH_DUP && !(flags & QH_THRICE))
 		if (db->set_flags(db, DB_DUP))
-			qdblog_err("qdb_openc: set_flags");
+			qdblog_err("qdb_openc: set_flags\n");
 
 	if (flags & QH_TXN)
 		txn = qdb_begin();
 
 	dbflags = (qdb_config.env ? DB_THREAD : 0) | (flags & QH_RDONLY ? DB_RDONLY : DB_CREATE);
 	if (db->open(db, txn, file, database, type, dbflags, mode))
-		qdblog_err("qdb_openc: open");
+		qdblog_err("qdb_openc: open\n");
 
 	if (flags & QH_TXN)
 		qdb_commit();
@@ -307,8 +307,8 @@ qdb_openc(const char *file, const char *database, int mode, unsigned flags, int 
 
 	if (flags & QH_DUP) {
 		qdb_type_t *vtype;
-		qdb_get(types_hd, &vtype, value_tid);
-		key_tid = vtype->dbl;
+		if (qdb_get(types_hd, &vtype, value_tid) && vtype->dbl)
+			key_tid = vtype->dbl;
 	}
 
 	snprintf(buf, sizeof(buf), "%sphd", database);
