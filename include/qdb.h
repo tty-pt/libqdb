@@ -104,6 +104,8 @@ typedef struct meta {
 	struct idm idm;
 	char type_str[2][8];
 	qdb_type_t *type[2];
+	char *cache;
+	size_t cache_m, cache_n;
 } qdb_meta_t;
 
 extern qdb_meta_t qdb_meta[QDB_DBS_MAX];
@@ -176,7 +178,11 @@ enum qdb_flags {
 	/* auto-index / auto-key (unsigned) */
 	QH_AINDEX = 32,
 
-	/* values 64 and 128 are reserved for the future */
+	/* caching for fast iteration
+	 * (insert order, fast put, slow del) */
+	QH_CACHE = 64,
+
+	/* 128 are reserved for the future */
 
 	/* key is two combined values */
 	QH_THRICE = 256,

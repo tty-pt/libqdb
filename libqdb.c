@@ -110,8 +110,18 @@ qdb_putc(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len
 			? txnl_peek(&qdb_config.txnl)
 			: NULL, &key, &data, 0);
 
-	if (ret && (ret != DB_KEYEXIST || !dupes))
-		qdblog(LOG_WARNING, "qdb_putc\n");
+	if (ret) {
+		if (ret != DB_KEYEXIST || !dupes)
+			qdblog(LOG_WARNING, "qdb_putc\n");
+	} else if (meta->flags & QH_CACHE) {
+		register size_t
+			kl = meta->type[QDB_KEY]->len,
+			vl = meta->type[QDB_VALUE >> 1]->len;
+		char *c = &meta->cache[meta->cache_n * (kl + vl)];
+		memcpy(c, key_r, kl);
+		memcpy(c + kl, value, vl);
+	}
+
 	return ret;
 }
 
@@ -201,6 +211,38 @@ qdb_init(void) {
 	txnl_empty = txnl_init();
 }
 
+void qdb_recache(unsigned hd)
+{
+	qdb_meta_t *meta = &qdb_meta[hd];
+	register size_t
+		kl = meta->type[QDB_KEY]->len,
+		vl = meta->type[QDB_VALUE >> 1]->len;
+
+	if (!(kl && vl))
+		qdblog_err("qdb_openc: variable size cache is not supported\n");
+
+	char key_buf[kl], value_buf[vl], *cache;
+	size_t item_len = kl + vl;
+
+	qdb_cur_t c = qdb_iter(hd, NULL);
+
+	while (qdb_next(key_buf, value_buf, &c))
+		meta->cache_n++;
+
+	meta->cache_m = 2 * meta->cache_n;
+	if (meta->cache)
+		free(meta->cache);
+	cache = meta->cache = malloc(meta->cache_m * item_len);
+
+	c = qdb_iter(hd, NULL);
+
+	while (qdb_next(key_buf, value_buf, &c)) {
+		memcpy(cache, key_buf, kl);
+		memcpy(cache + kl, value_buf, vl);
+		cache += item_len;
+	}
+}
+
 unsigned
 _qdb_openc(const char *file, const char *database, int mode, unsigned flags, int type, char *key_tid, char *value_tid)
 {
@@ -281,6 +323,13 @@ out:
 	qdb_meta[id].flags = flags;
 	qdb_meta[id].type[QDB_KEY] = key_type;
 	qdb_meta[id].type[QDB_VALUE >> 1] = value_type;
+
+	if (flags & QH_CACHE)
+		qdb_recache(id);
+	else {
+		qdb_meta[id].cache = NULL;
+		qdb_meta[id].cache_m = qdb_meta[id].cache_n = 0;
+	}
 
 #if 0
 	fprintf(stderr, "qdb_openc %u %s %s %u %s %s %u %u\n",
@@ -471,8 +520,12 @@ qdb_rem(unsigned hd, void *key_data, void *value_data)
 	cursor->close(cursor);
 	if (ret)
 		qdblog(LOG_ERR, "qdb_rem: %s\n", db_strerror(ret));
-	else if ((meta->flags & QH_AINDEX) && !qdb_exists(hd, key_data))
-		idm_del(&meta->idm, * (unsigned *) key_data);
+	else {
+		if (meta->flags & QH_CACHE)
+			qdb_recache(hd);
+		if ((meta->flags & QH_AINDEX) && !qdb_exists(hd, key_data))
+			idm_del(&meta->idm, * (unsigned *) key_data);
+	}
 
 	return ret;
 }
@@ -493,6 +546,9 @@ void qdb_del(unsigned hd, void *key, void *value) {
 
 	while (qdb_next(NULL, NULL, &c))
 		qdb_cdel(&c);
+
+	if (meta->flags & QH_CACHE)
+		qdb_recache(hd);
 }
 struct qdb_internal {
 	unsigned hd;
@@ -504,20 +560,31 @@ struct qdb_internal {
 qdb_cur_t
 qdb_iter(unsigned hd, void *key) {
 	DB *db = qdb_dbs[hd];
+	qdb_meta_t *meta = &qdb_meta[hd];
 	qdb_cur_t cur;
 	struct qdb_internal *internal = malloc(sizeof(struct qdb_internal));
 	cur.internal = internal;
 	internal->hd = hd;
 	internal->cursor = NULL;
-	qdb_meta_t *meta = &qdb_meta[hd];
+
+	memset(&internal->pkey, 0, sizeof(DBT));
+	memset(&internal->key, 0, sizeof(DBT));
+	memset(&internal->data, 0, sizeof(DBT));
+
+	if (meta->flags & QH_CACHE) {
+		if (key)
+			qdblog_err("qdb_iter: cached non-NULL iteration is not supported\n");
+		cur.flags = QH_CACHE;
+		internal->key.size = meta->type[QDB_KEY]->len;
+		internal->data.size = meta->type[QDB_VALUE >> 1]->len;
+		internal->key.data = meta->cache;
+		return cur;
+	}
 
 	db->cursor(db, hd && (meta->flags & QH_TXN)
 			? txnl_peek(&qdb_config.txnl)
 			: NULL, &internal->cursor, 0);
 
-	memset(&internal->pkey, 0, sizeof(DBT));
-	memset(&internal->key, 0, sizeof(DBT));
-	memset(&internal->data, 0, sizeof(DBT));
 	internal->pkey.data = internal->key.data = key;
 	internal->key.flags = internal->pkey.flags = internal->data.flags = 0; /* was DB_DBT_MALLOC */
 	internal->pkey.size = internal->key.size
@@ -539,6 +606,19 @@ void qdb_fin(qdb_cur_t *cur) {
 int
 qdb_next(void *key, void *value, qdb_cur_t *cur)
 {
+	if (cur->flags & QH_CACHE) {
+		struct qdb_internal *internal = cur->internal;
+		qdb_meta_t *meta = &qdb_meta[internal->hd];
+		char *c = internal->key.data;
+		register size_t kl = internal->key.size,
+			 vl = internal->data.size,
+			 il = kl + vl;
+		memcpy(key, c, kl);
+		memcpy(value, c + kl, vl);
+		internal->key.data = c + il;
+		return (char *) internal->key.data < meta->cache + meta->cache_n * il;
+	}
+
 	struct qdb_internal *internal;
 	ssize_t ret;
 	int flags;
