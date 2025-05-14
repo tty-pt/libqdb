@@ -104,6 +104,8 @@ typedef struct meta {
 	struct idm idm;
 	char type_str[2][8];
 	qdb_type_t *type[2];
+	char *cache;
+	size_t cache_m, cache_n;
 } qdb_meta_t;
 
 extern qdb_meta_t qdb_meta[QDB_DBS_MAX];
@@ -176,7 +178,12 @@ enum qdb_flags {
 	/* auto-index / auto-key (unsigned) */
 	QH_AINDEX = 32,
 
-	/* values 64 and 128 are reserved for the future */
+	/* caching for fast iteration
+	 * (insert order, fast put, slow del, fast get for STATIC AINDEX) */
+	QH_CACHE = 64,
+
+	/* environment flag for threads */
+	QH_THREAD = 128,
 
 	/* key is two combined values */
 	QH_THRICE = 256,
@@ -190,6 +197,9 @@ typedef struct {
 
 /* begin a transaction */
 static inline DB_TXN *qdb_begin(void) {
+	if (!qdb_config.env)
+		return NULL;
+
 	DB_TXN *txn;
 
 	if (qdb_config.env->txn_begin(qdb_config.env, txnl_peek(&qdb_config.txnl), &txn, 0)) {
@@ -417,6 +427,11 @@ void qdb_env_open(DB_ENV *env, char *path, unsigned flags);
 
 /* abort a transation */
 static inline void qdb_checkpoint(unsigned kbytes, unsigned min, unsigned flags) {
+	if (!qdb_config.env) {
+		qdblog(LOG_WARNING, "qdb_checkpoint: no env\n");
+		return;
+	}
+
 	qdb_config.env->txn_checkpoint(qdb_config.env, kbytes, min, flags);
 }
 

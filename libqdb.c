@@ -110,18 +110,64 @@ qdb_putc(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len
 			? txnl_peek(&qdb_config.txnl)
 			: NULL, &key, &data, 0);
 
-	if (ret && (ret != DB_KEYEXIST || !dupes))
-		qdblog(LOG_WARNING, "qdb_putc\n");
+	if (ret) {
+		if (ret != DB_KEYEXIST || !dupes)
+			qdblog(LOG_WARNING, "qdb_putc\n");
+	} else if (meta->flags & QH_CACHE) {
+		register unsigned id = * (unsigned *) key_r;
+		if (id == qdb_meta_id)
+			return ret;
+
+		register size_t
+			kl = meta->type[QDB_KEY]->len,
+			vl = meta->type[QDB_VALUE >> 1]->len,
+			il = kl + vl;
+		char *c;
+
+		if (meta->type[QDB_KEY] == &qdb_unsigned) {
+			c = meta->cache + id * il;
+			if (id >= meta->cache_n)
+				meta->cache_n++;
+		} else {
+			c = meta->cache + meta->cache_n * il;
+			meta->cache_n++;
+		}
+
+		memcpy(c, key_r, kl);
+		memcpy(c + kl, value, vl);
+
+		if (meta->cache_n >= meta->cache_m) {
+			meta->cache_m *= 2;
+			meta->cache = realloc(meta->cache, meta->cache_m * il);
+		}
+	}
+
 	return ret;
 }
 
 void *qdb_getc(unsigned hd, size_t *size, void *key_r, size_t key_len)
 {
-	DB *db = qdb_dbs[hd];
+	DB *db;
 	DBT key, data;
 	int ret;
 
 	qdb_meta_t *meta = &qdb_meta[hd];
+
+	if ((meta->flags & QH_CACHE) && (meta->flags & QH_AINDEX)) {
+		register unsigned id = * (unsigned *) key_r;
+
+		if (id != qdb_meta_id) {
+			register size_t vl = meta->type[QDB_VALUE >> 1]->len;
+
+			if (id >= meta->cache_n)
+				return NULL;
+
+			*size = vl;
+			return meta->cache + sizeof(unsigned) + id * (sizeof(unsigned) + vl);
+		}
+	}
+	
+	db = qdb_dbs[hd];
 
 	memset(&key, 0, sizeof(key));
 	memset(&data, 0, sizeof(data));
@@ -201,6 +247,49 @@ qdb_init(void) {
 	txnl_empty = txnl_init();
 }
 
+static inline void qdb_recache(unsigned hd)
+{
+	qdb_meta_t *meta = &qdb_meta[hd];
+	register size_t
+		kl = meta->type[QDB_KEY]->len,
+		vl = meta->type[QDB_VALUE >> 1]->len;
+
+	if (!(kl && vl))
+		qdblog_err("qdb_openc: variable size cache is not supported\n");
+
+	char key_buf[kl], value_buf[vl], *cache;
+	size_t item_len = kl + vl;
+	meta->flags &= ~QH_CACHE;
+	qdb_cur_t c;
+
+	if (meta->flags & QH_AINDEX)
+		meta->cache_n = meta->idm.last;
+	else {
+		c = qdb_iter(hd, NULL);
+
+		while (qdb_next(key_buf, value_buf, &c))
+			meta->cache_n++;
+	}
+
+	meta->cache_m = meta->cache_n
+		? 2 * meta->cache_n
+		: 64;
+
+	if (meta->cache)
+		free(meta->cache);
+	cache = meta->cache = malloc(meta->cache_m * item_len);
+
+	c = qdb_iter(hd, NULL);
+
+	while (qdb_next(key_buf, value_buf, &c)) {
+		memcpy(cache, key_buf, kl);
+		memcpy(cache + kl, value_buf, vl);
+		cache += item_len;
+	}
+
+	meta->flags |= QH_CACHE;
+}
+
 unsigned
 _qdb_openc(const char *file, const char *database, int mode, unsigned flags, int type, char *key_tid, char *value_tid)
 {
@@ -234,15 +323,9 @@ _qdb_openc(const char *file, const char *database, int mode, unsigned flags, int
 		if (db->set_flags(db, DB_DUP))
 			qdblog_err("qdb_openc: set_flags\n");
 
-	if (flags & QH_TXN)
-		txn = qdb_begin();
-
-	dbflags = (qdb_config.env ? DB_THREAD : 0) | (flags & QH_RDONLY ? DB_RDONLY : DB_CREATE);
+	dbflags = (qdb_config.flags & QH_THREAD ? DB_THREAD : 0) | (flags & QH_RDONLY ? DB_RDONLY : DB_CREATE);
 	if (db->open(db, txn, file, database, type, dbflags, mode))
 		qdblog_err("qdb_openc: open\n");
-
-	if (flags & QH_TXN)
-		qdb_commit();
 
 	if (flags & (QH_SEC | QH_REPURPOSE))
 		goto out;
@@ -278,9 +361,17 @@ out:
 	strcpy(qdb_meta[id].type_str[QDB_KEY], key_tid);
 	strcpy(qdb_meta[id].type_str[QDB_VALUE >> 1], value_tid);
 	qdb_meta[id].phd = qdb_meta_id;
-	qdb_meta[id].flags = flags;
+	qdb_meta[id].flags = (flags & ~QH_CACHE);
 	qdb_meta[id].type[QDB_KEY] = key_type;
 	qdb_meta[id].type[QDB_VALUE >> 1] = value_type;
+
+	if (flags & QH_CACHE)
+		qdb_recache(id);
+	else {
+		qdb_meta[id].cache = NULL;
+		qdb_meta[id].cache_m = qdb_meta[id].cache_n = 0;
+	}
+	qdb_meta[id].flags = flags;
 
 #if 0
 	fprintf(stderr, "qdb_openc %u %s %s %u %s %s %u %u\n",
@@ -339,7 +430,13 @@ qdb_openc(const char *file, const char *database, int mode, unsigned flags, int 
 }
 
 void *qdb_pgetc(unsigned hd, size_t *len, void *key_r) {
-	unsigned flags = qdb_meta[hd].flags;
+	qdb_meta_t *meta = &qdb_meta[hd];
+	if ((meta->flags & QH_CACHE) && (meta->flags & QH_AINDEX)) {
+		unsigned id = * (unsigned *) key_r;
+		return meta->cache + (sizeof(unsigned) + meta->type[QDB_VALUE >> 1]->len) * id;
+	}
+
+	unsigned flags = meta->flags;
 
 	DB *db = qdb_dbs[hd];
 	DBT key, pkey, data;
@@ -469,12 +566,31 @@ qdb_rem(unsigned hd, void *key_data, void *value_data)
 		ret = cursor->del(cursor, 0);
 
 	cursor->close(cursor);
-	if (ret)
-		qdblog(LOG_ERR, "qdb_rem: %s\n", db_strerror(ret));
-	else if ((meta->flags & QH_AINDEX) && !qdb_exists(hd, key_data))
+	if (ret) {
+		if (ret != DB_NOTFOUND)
+			qdblog(LOG_ERR, "qdb_rem: %s\n", db_strerror(ret));
+	} else if ((meta->flags & QH_AINDEX) && !qdb_exists(hd, key_data))
 		idm_del(&meta->idm, * (unsigned *) key_data);
 
 	return ret;
+}
+
+static inline void qdb_idel(unsigned hd, void *key_r, size_t key_len) {
+	DB *db = qdb_dbs[hd];
+	DBT key;
+	int ret;
+
+	memset(&key, 0, sizeof(key));
+
+	key.data = key_r;
+	key.size = key_len;
+
+	ret = db->del(db, (qdb_meta[hd].flags & QH_TXN)
+			? txnl_peek(&qdb_config.txnl)
+			: NULL, &key, 0);
+
+	if (ret && ret != DB_NOTFOUND)
+		qdblog_err("qdb_idel");
 }
 
 // FIXME this should return a status code
@@ -486,14 +602,18 @@ void qdb_del(unsigned hd, void *key, void *value) {
 
 	qdb_meta_t *meta = &qdb_meta[hd];
 
-	if (meta->flags & QH_AINDEX)
+	if (meta->flags & QH_AINDEX) {
 		idm_del(&meta->idm, * (unsigned *) key);
+		qdb_idel(hd, key, sizeof(unsigned));
+		return;
+	}
 
 	qdb_cur_t c = qdb_iter(hd, key);
 
 	while (qdb_next(NULL, NULL, &c))
 		qdb_cdel(&c);
 }
+
 struct qdb_internal {
 	unsigned hd;
 	DBT data, key, pkey;
@@ -504,20 +624,29 @@ struct qdb_internal {
 qdb_cur_t
 qdb_iter(unsigned hd, void *key) {
 	DB *db = qdb_dbs[hd];
+	qdb_meta_t *meta = &qdb_meta[hd];
 	qdb_cur_t cur;
 	struct qdb_internal *internal = malloc(sizeof(struct qdb_internal));
 	cur.internal = internal;
 	internal->hd = hd;
 	internal->cursor = NULL;
-	qdb_meta_t *meta = &qdb_meta[hd];
+
+	memset(&internal->pkey, 0, sizeof(DBT));
+	memset(&internal->key, 0, sizeof(DBT));
+	memset(&internal->data, 0, sizeof(DBT));
+
+	if (!key && (meta->flags & QH_CACHE)) {
+		cur.flags = QH_CACHE;
+		internal->key.data = meta->cache;
+		internal->key.size = meta->type[QDB_KEY]->len;
+		internal->data.size = meta->type[QDB_VALUE >> 1]->len;
+		return cur;
+	}
 
 	db->cursor(db, hd && (meta->flags & QH_TXN)
 			? txnl_peek(&qdb_config.txnl)
 			: NULL, &internal->cursor, 0);
 
-	memset(&internal->pkey, 0, sizeof(DBT));
-	memset(&internal->key, 0, sizeof(DBT));
-	memset(&internal->data, 0, sizeof(DBT));
 	internal->pkey.data = internal->key.data = key;
 	internal->key.flags = internal->pkey.flags = internal->data.flags = 0; /* was DB_DBT_MALLOC */
 	internal->pkey.size = internal->key.size
@@ -531,7 +660,8 @@ qdb_iter(unsigned hd, void *key) {
 
 void qdb_fin(qdb_cur_t *cur) {
 	struct qdb_internal *internal = cur->internal;
-	internal->cursor->close(internal->cursor);
+	if (!(cur->flags & QH_CACHE))
+		internal->cursor->close(internal->cursor);
 	free(internal);
 	cur->internal = NULL;
 }
@@ -539,6 +669,29 @@ void qdb_fin(qdb_cur_t *cur) {
 int
 qdb_next(void *key, void *value, qdb_cur_t *cur)
 {
+	if (cur->flags & QH_CACHE) {
+		struct qdb_internal *internal = cur->internal;
+		qdb_meta_t *meta = &qdb_meta[internal->hd];
+		char *c = internal->key.data;
+		register size_t kl = internal->key.size,
+			 vl = internal->data.size,
+			 il = kl + vl;
+
+		if (c >= meta->cache + meta->cache_n * il)
+			return 0;
+
+		if (key) {
+			memcpy(key, c, kl);
+			memcpy(value, c + kl, vl);
+		}
+
+		if (meta->flags & QH_AINDEX)
+			return 0;
+
+		internal->key.data = c + il;
+		return 1;
+	}
+
 	struct qdb_internal *internal;
 	ssize_t ret;
 	int flags;
@@ -645,7 +798,13 @@ unsigned idm_new(struct idm *idm) {
 }
 
 void qdb_env_open(DB_ENV *env, char *path, unsigned flags) {
-	unsigned iflags = DB_CREATE | DB_INIT_MPOOL | DB_INIT_LOCK | DB_THREAD;
+	unsigned iflags = DB_CREATE | DB_INIT_MPOOL;
+
+	if (flags & QH_THREAD) {
+		iflags |= DB_THREAD | DB_INIT_LOCK;
+		qdb_config.flags |= QH_THREAD;
+	} else
+		iflags |= DB_PRIVATE;
 
 	if (flags & QH_TXN) {
 		env->set_flags(env, DB_AUTO_COMMIT, 1);
