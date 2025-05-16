@@ -188,13 +188,19 @@ enum qdb_flags {
 	/* auto-index / auto-key (unsigned) */
 	QH_AINDEX = 32,
 
-	/* value 64 is reserved for the future */
+	/* value 64 is reserved as internal flag */
 
 	/* environment flag for threads */
 	QH_THREAD = 128,
 
 	/* key is two combined values */
 	QH_THRICE = 256,
+
+	/* internal flag - indicates the db lives in memory only */
+	/* TODO this optimizes cached dbs - why not
+	 * just update the file on sync, and then we
+	 * can have the optimization everywhere? */
+	QH_MEMORY_ONLY = 512,
 };
 
 /* we use these cursors for iteration */

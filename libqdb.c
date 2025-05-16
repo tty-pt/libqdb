@@ -34,7 +34,6 @@ static inline struct idmap idmap_init(size_t value_len) {
 		.omap = malloc(4 * sizeof(unsigned)),
 		.vmap = malloc(4 * value_len),
 		.m = 4, .n = 0,
-		.last = qdb_meta_id,
 		.value_len = value_len,
 	};
 	memset(idmap.map, 0, 4 * sizeof(unsigned));
@@ -67,7 +66,6 @@ static inline void idmap_put(struct idmap *idmap, unsigned id, void *value) {
 	idmap->map[id] = idmap->n;
 	memcpy(idmap->vmap + id * idmap->value_len, value, idmap->value_len);
 	idmap->n++;
-	idmap->last = id;
 }
 
 static inline void idmap_del(struct idmap *idmap, unsigned id) {
@@ -99,6 +97,14 @@ static inline void *idmap_get(struct idmap *idmap, unsigned id, void *value __at
 	if (n >= idmap->n || idmap->omap[n] != id)
 		return NULL;
 
+	return idmap->vmap + id * idmap->value_len;
+}
+
+static inline void *idmap_nth(struct idmap *idmap, unsigned n) {
+	if (n >= idmap->n)
+		return NULL;
+
+	unsigned id = idmap->omap[n];
 	return idmap->vmap + id * idmap->value_len;
 }
 
@@ -146,7 +152,7 @@ void qdb_set_logger(log_t logger) {
 }
 
 static int is_cached(qdb_meta_t *meta) {
-	if (meta->flags & (QH_DUP | QH_THREAD))
+	if (meta->flags & QH_THREAD)
 		return 0;
 
 	if (meta->type[QDB_KEY] != &qdb_unsigned)
@@ -155,14 +161,45 @@ static int is_cached(qdb_meta_t *meta) {
 	return meta->type[QDB_VALUE >> 1]->len;
 }
 
+static inline void
+cached_put(qdb_meta_t *meta, void *key_r, void *value) {
+	unsigned id = * (unsigned *) key_r;
+
+	if (id == qdb_meta_id)
+		return;
+
+	if (!(meta->flags & QH_DUP)) {
+		idmap_put(&meta->cache, id, value);
+		return;
+	}
+
+	// vt must be unsigned for now
+	unsigned idv = * (unsigned *) value;
+	struct idmap *idmap_r = idmap_get(&meta->cache, id, NULL);
+	if (!idmap_r) {
+		qdb_type_t *vt = meta->type[QDB_VALUE >> 1];
+		struct idmap idmap = idmap_init(vt->len);
+		idmap_put(&idmap, idv, &idv);
+		idmap_put(&meta->cache, id, &idmap);
+		return;
+	}
+
+	idmap_put(idmap_r, idv, &idv);
+}
+
 int
 qdb_putc(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len) {
+	qdb_meta_t *meta = &qdb_meta[hd];
+
+	if ((meta->flags & QH_MEMORY_ONLY) && is_cached(meta)) {
+		cached_put(meta, key_r, value);
+		return 0;
+	}
+
 	unsigned id;
 	DB *db = qdb_dbs[hd];
 	DBT key, data;
 	int ret;
-
-	qdb_meta_t *meta = &qdb_meta[hd];
 
 	if ((meta->flags & QH_AINDEX) && (id = * (unsigned *) key_r) != qdb_meta_id) {
 		if (meta->idm.last < id)
@@ -197,13 +234,31 @@ qdb_putc(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len
 	if (ret) {
 		if (ret != DB_KEYEXIST || !dupes)
 			qdblog(LOG_WARNING, "qdb_putc\n");
-	} else if (is_cached(meta)) {
-		unsigned id = * (unsigned *) key_r;
-		if (id != qdb_meta_id)
-			idmap_put(&meta->cache, id, value);
-	}
+	} else if (is_cached(meta))
+		cached_put(meta, key_r, value);
 
 	return ret;
+}
+
+static inline void *
+cached_get(qdb_meta_t *meta, unsigned id, size_t *size) {
+	void *val;
+
+	if (!(meta->flags & QH_DUP))
+		val = idmap_get(&meta->cache, id, NULL);
+	else {
+		struct idmap *idmap = idmap_get(&meta->cache, id, NULL);
+
+		if (!idmap)
+			return NULL;
+
+		val = idmap_nth(idmap, 0);
+	}
+
+	if (val)
+		*size = meta->type[QDB_VALUE >> 1]->len;
+
+	return val;
 }
 
 void *qdb_getc(unsigned hd, size_t *size, void *key_r, size_t key_len)
@@ -213,20 +268,13 @@ void *qdb_getc(unsigned hd, size_t *size, void *key_r, size_t key_len)
 	int ret;
 
 	qdb_meta_t *meta = &qdb_meta[hd];
+
 	if (is_cached(meta)) {
 		unsigned id = * (unsigned *) key_r;
 
-		if (id == qdb_meta_id)
-			goto normal;
-
-		/* fprintf(stderr, "cached GET %u %u\n", hd, id); */
-		void *val = idmap_get(&meta->cache, id, NULL);
-		if (val)
-			*size = meta->type[QDB_VALUE >> 1]->len;
-
-		return val;
+		if (id != qdb_meta_id)
+			return cached_get(meta, id, size);
 	}
-normal:
 	
 	db = qdb_dbs[hd];
 
@@ -314,8 +362,8 @@ _qdb_openc(const char *file, const char *database, int mode, unsigned flags, int
 	DB *db;
 	unsigned id, dbflags = 0;
 	DB_TXN *txn = NULL; // local transaction just for open
-
 	qdb_type_t *key_type = NULL, *value_type = NULL;
+	qdb_meta_t *meta;
 
 	if ((flags & QH_AINDEX) && strcmp(key_tid, "u"))
 		qdblog_err("qdb_openc: AINDEX without 'u' key\n");
@@ -376,15 +424,20 @@ _qdb_openc(const char *file, const char *database, int mode, unsigned flags, int
 		_qdb_lopenc(id, value_type);
 
 out:
+	meta = &qdb_meta[id];
 	strcpy(qdb_meta[id].type_str[QDB_KEY], key_tid);
 	strcpy(qdb_meta[id].type_str[QDB_VALUE >> 1], value_tid);
 	qdb_meta[id].phd = qdb_meta_id;
+	if (!file)
+		flags |= QH_MEMORY_ONLY;
 	qdb_meta[id].flags = flags;
 	qdb_meta[id].type[QDB_KEY] = key_type;
 	qdb_meta[id].type[QDB_VALUE >> 1] = value_type;
 
-	if (is_cached(&qdb_meta[id]))
-		qdb_meta[id].cache = idmap_init(value_type->len);
+	if (is_cached(meta))
+		meta->cache = idmap_init(meta->flags & QH_DUP
+				? sizeof(struct idmap)
+				: value_type->len);
 
 #if 0
 	fprintf(stderr, "qdb_openc %u %s %s %u %s %s %u %u\n",
@@ -600,14 +653,36 @@ static inline void qdb_idel(unsigned hd, void *key_r, size_t key_len) {
 		qdblog_err("qdb_idel");
 }
 
+static inline void cached_del(qdb_meta_t *meta, unsigned id, void *value)
+{
+	if (!(meta->flags & QH_DUP)) {
+		idmap_del(&meta->cache, id); 
+		return;
+	}
+
+	struct idmap *idmap = idmap_get(&meta->cache, id, NULL);
+
+	if (!idmap || !idmap->n)
+		return; // not present
+
+	// TODO if !value
+
+	unsigned vid = * (unsigned *) value;
+	idmap_del(idmap, vid);
+}
+
 // FIXME this should return a status code
 void qdb_del(unsigned hd, void *key, void *value) {
 	qdb_meta_t *meta = &qdb_meta[hd];
 
 	if (is_cached(meta)) {
 		unsigned id = * (unsigned *) key;
-		if (id != qdb_meta_id)
-			idmap_del(&meta->cache, id); 
+
+		if (id != qdb_meta_id) {
+			cached_del(meta, id, value);
+			if (meta->flags & QH_MEMORY_ONLY)
+				return;
+		}
 	}
 
 	if (value != NULL) {
@@ -657,6 +732,8 @@ qdb_iter(unsigned hd, void *key) {
 	memset(&internal->data, 0, sizeof(DBT));
 
 	if (is_cached(meta)) {
+		internal->data.size = 0;
+
 		if (!key) {
 			internal->key.data = NULL;
 			internal->key.size = 0;
@@ -664,9 +741,10 @@ qdb_iter(unsigned hd, void *key) {
 		}
 
 		unsigned id = * (unsigned *) key;
-		unsigned n = meta->cache.map[id];
 		internal->key.data = key;
-		internal->key.size = n;
+		internal->key.size = id > meta->cache.m
+			? meta->cache.m
+			: meta->cache.map[id];
 		return cur;
 	}
 
@@ -693,6 +771,55 @@ void qdb_fin(qdb_cur_t *cur) {
 	cur->internal = NULL;
 }
 
+static inline int
+cached_next(qdb_meta_t *meta, struct qdb_internal *internal, void *key, void *value) {
+	unsigned n;
+cagain:
+	n = internal->key.size;
+
+	if (n >= meta->cache.n)
+		return 0;
+
+	unsigned id = meta->cache.omap[n];
+
+	// keyed search
+	if (internal->key.data) {
+		if (id != * (unsigned *) internal->key.data)
+			return 0;
+
+		if (meta->flags & QH_DUP) {
+			struct idmap *idmap = idmap_get(&meta->cache, id, NULL);
+			unsigned *nth = idmap_nth(idmap, internal->data.size);
+			if (!nth)
+				return 0;
+			memcpy(value, nth, sizeof(unsigned));
+			internal->data.size++;
+			return 1;
+		}
+	}
+
+	if (meta->flags & QH_DUP) {
+		struct idmap *idmap = idmap_get(&meta->cache, id, NULL);
+		unsigned *nth = idmap_nth(idmap, internal->data.size);
+
+		if (!nth) {
+			internal->key.size++;
+			internal->data.size = 0;
+			goto cagain;
+		}
+
+		memcpy(value, nth, sizeof(unsigned));
+		internal->data.size++;
+		return 1;
+	}
+
+	memcpy(key, &id, sizeof(id));
+	memcpy(value, meta->cache.vmap + id * meta->cache.value_len, sizeof(id));
+
+	internal->key.size++;
+	return 1;
+}
+
 int
 qdb_next(void *key, void *value, qdb_cur_t *cur)
 {
@@ -701,23 +828,8 @@ qdb_next(void *key, void *value, qdb_cur_t *cur)
 	int flags;
 	qdb_meta_t *meta = &qdb_meta[internal->hd];
 
-	if (is_cached(meta)) {
-		unsigned n = internal->key.size;
-
-		if (n >= meta->cache.n)
-			return 0;
-
-		unsigned id = meta->cache.omap[n];
-
-		if (internal->key.data && id != * (unsigned *) internal->key.data)
-			return 0;
-
-		memcpy(key, &id, sizeof(id));
-		memcpy(value, meta->cache.vmap + id * meta->cache.value_len, sizeof(id));
-
-		internal->key.size++;
-		return 1;
-	}
+	if (is_cached(meta))
+		return cached_next(meta, internal, key, value);
 
 	flags = DB_FIRST;
 
@@ -751,7 +863,6 @@ again:
 	memset(&internal->key, 0, sizeof(DBT));
 	memset(&internal->pkey, 0, sizeof(DBT));
 	memset(&internal->data, 0, sizeof(DBT));
-
 	return 1;
 }
 
