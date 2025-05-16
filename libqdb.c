@@ -28,6 +28,70 @@ struct qdb_config qdb_config = {
 	.env = NULL,
 };
 
+struct idmap {
+	unsigned *map, *omap;
+	unsigned min, m, n, last;
+};
+
+
+static inline void memset32(uint32_t *dest, uint32_t value, size_t count) {
+    for (size_t i = 0; i < count / 4; ++i) {
+        dest[i] = value;
+    }
+}
+
+static inline struct idmap idmap_init(void) {
+	struct idmap idmap = {
+		.map = malloc(32 * sizeof(unsigned)),
+		.omap = malloc(32 * sizeof(unsigned)),
+		.m = 32, .n = 0, .min = 0,
+		.last = qdb_meta_id
+	};
+	memset(idmap.map, qdb_meta_id, 32 * sizeof(unsigned));
+	memset(idmap.omap, qdb_meta_id, 32 * sizeof(unsigned));
+	return idmap;
+}
+
+static inline void idmap_put(struct idmap *idmap, unsigned id) {
+	/* if (idmap->min < id) { */
+	/* } */
+
+	if (idmap->min + idmap->m < id) {
+		unsigned old_m = idmap->m;
+		idmap->m = id - idmap->min;
+		idmap->m *= 2;
+		idmap->map = realloc(idmap->map, idmap->m * sizeof(unsigned));
+		idmap->omap = realloc(idmap->omap, idmap->m * sizeof(unsigned));
+		memset(idmap->map + old_m, -1, (idmap->m - old_m) * sizeof(unsigned));
+		memset(idmap->omap + old_m, -1, (idmap->m - old_m) * sizeof(unsigned));
+	}
+
+	fprintf(stderr, "idmap put %u, %u, %p[%u/%u]\n", id,
+			idmap->min, idmap->map, idmap->n,
+			idmap->m);
+	if (idmap->map[id - idmap->min] != qdb_meta_id)
+		return;
+
+	idmap->omap[idmap->n] = id;
+	idmap->map[id - idmap->min] = idmap->n;
+	idmap->n++;
+	idmap->last = id;
+}
+
+static inline void idmap_del(struct idmap *idmap, unsigned id) {
+	if (idmap->min < id)
+		return; // not present
+
+	if (idmap->min + idmap->m < id)
+		return; // not present
+
+	unsigned n_index = idmap->map[id - idmap->min];
+
+	memcpy(&idmap->omap[n_index], &idmap->omap[n_index + 1], idmap->n - n_index);
+	idmap->n--;
+	idmap->map[id - idmap->min] = qdb_meta_id;
+}
+
 static struct idm idm;
 
 static int qdb_first = 1;
@@ -69,6 +133,63 @@ log_t qdblog = qdb_logger_stderr;
 
 void qdb_set_logger(log_t logger) {
 	qdblog = logger;
+}
+
+static inline int qdb_cache_putc(unsigned hd, qdb_meta_t *meta, void *key_r, void *value) {
+	register unsigned id = * (unsigned *) key_r;
+	if (id == qdb_meta_id)
+		return 1;
+
+	qdb_type_t
+		*kt = meta->type[QDB_KEY],
+		*vt = meta->type[QDB_VALUE >> 1];
+
+	register size_t kl = kt->len, vl = vt->len,
+		 il = kl + vl;
+
+	char *c;
+
+	if (kt != &qdb_unsigned) {
+		id = meta->cache_n;
+		meta->cache_n++;
+
+		if (meta->cache_n >= meta->cache_m) {
+			meta->cache_m *= meta->cache_n * 2;
+			meta->cache = realloc(meta->cache, meta->cache_m * il);
+		}
+
+		c = meta->cache + id * il;
+		memcpy(c + kl, value, vl);
+		memcpy(c, key_r, kl);
+		return 0;
+	}
+
+	if (id >= meta->cache_n)
+		meta->cache_n = id + 1;
+
+	if (meta->cache_n >= meta->cache_m) {
+		meta->cache_m *= meta->cache_n * 2;
+		meta->cache = realloc(meta->cache, meta->cache_m * il);
+	}
+
+	if ((meta->flags & QH_DUP) && vt == &qdb_unsigned) {
+		vl = sizeof(struct idmap);
+		il = kl + vl;
+		c = meta->cache + id * il;
+		struct idmap *idmap = (struct idmap *) c + kl;
+		if (* (unsigned *) c != id) {
+			*idmap = idmap_init();
+			fprintf(stderr, "contents init!!! %p\n", idmap->map);
+		}
+		idmap_put(idmap, * (unsigned *) value);
+		fprintf(stderr, "contents put %u <- %u // %p\n", id, * (unsigned *) value, idmap->map);
+	} else {
+		c = meta->cache + id * il;
+		memcpy(c + kl, value, vl);
+	}
+
+	memcpy(c, key_r, kl);
+	return 0;
 }
 
 int
@@ -113,34 +234,8 @@ qdb_putc(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len
 	if (ret) {
 		if (ret != DB_KEYEXIST || !dupes)
 			qdblog(LOG_WARNING, "qdb_putc\n");
-	} else if (meta->flags & QH_CACHE) {
-		register unsigned id = * (unsigned *) key_r;
-		if (id == qdb_meta_id)
-			return ret;
-
-		register size_t
-			kl = meta->type[QDB_KEY]->len,
-			vl = meta->type[QDB_VALUE >> 1]->len,
-			il = kl + vl;
-		char *c;
-
-		if (meta->type[QDB_KEY] == &qdb_unsigned) {
-			c = meta->cache + id * il;
-			if (id >= meta->cache_n)
-				meta->cache_n++;
-		} else {
-			c = meta->cache + meta->cache_n * il;
-			meta->cache_n++;
-		}
-
-		memcpy(c, key_r, kl);
-		memcpy(c + kl, value, vl);
-
-		if (meta->cache_n >= meta->cache_m) {
-			meta->cache_m *= 2;
-			meta->cache = realloc(meta->cache, meta->cache_m * il);
-		}
-	}
+	} else if (meta->flags & QH_CACHE)
+		qdb_cache_putc(hd, meta, key_r, value);
 
 	return ret;
 }
@@ -152,19 +247,34 @@ void *qdb_getc(unsigned hd, size_t *size, void *key_r, size_t key_len)
 	int ret;
 
 	qdb_meta_t *meta = &qdb_meta[hd];
+	qdb_type_t *kt = meta->type[QDB_KEY];
 
-	if ((meta->flags & QH_CACHE) && (meta->flags & QH_AINDEX)) {
+	if ((meta->flags & QH_CACHE) && kt == &qdb_unsigned) {
 		register unsigned id = * (unsigned *) key_r;
 
-		if (id != qdb_meta_id) {
-			register size_t vl = meta->type[QDB_VALUE >> 1]->len;
+		if (id == qdb_meta_id)
+			return NULL;
 
-			if (id >= meta->cache_n)
-				return NULL;
+		register size_t vl = meta->type[QDB_VALUE >> 1]->len;
 
-			*size = vl;
-			return meta->cache + sizeof(unsigned) + id * (sizeof(unsigned) + vl);
+		if (id >= meta->cache_n)
+			return NULL;
+
+		char *c = meta->cache + id * (sizeof(unsigned) + vl);
+		if (id != * (unsigned *) c)
+			return NULL;
+
+		if (meta->flags & QH_DUP) {
+			// TODO warn only available on unsinged
+			*size = sizeof(unsigned);
+			return &((struct idmap *) (meta->cache + sizeof(unsigned) + id * (sizeof(unsigned) + sizeof(struct idmap))))->last;
 		}
+
+		c += sizeof(unsigned);
+		*size = vl;
+		if (hd == 21)
+			fprintf(stderr, "cache_get %u %u %zu - %u\n", hd, id, vl, * (unsigned *) c);
+		return c;
 	}
 	
 	db = qdb_dbs[hd];
@@ -277,7 +387,9 @@ static inline void qdb_recache(unsigned hd)
 
 	if (meta->cache)
 		free(meta->cache);
-	cache = meta->cache = malloc(meta->cache_m * item_len);
+	size_t cache_len = meta->cache_m * item_len;
+	cache = meta->cache = malloc(cache_len);
+	memset(cache, qdb_meta_id, cache_len);
 
 	c = qdb_iter(hd, NULL);
 
@@ -373,7 +485,7 @@ out:
 	}
 	qdb_meta[id].flags = flags;
 
-#if 0
+#if 1
 	fprintf(stderr, "qdb_openc %u %s %s %u %s %s %u %u\n",
 			id, file, database,
 			flags, key_tid, value_tid, flags, dbflags);
@@ -431,7 +543,8 @@ qdb_openc(const char *file, const char *database, int mode, unsigned flags, int 
 
 void *qdb_pgetc(unsigned hd, size_t *len, void *key_r) {
 	qdb_meta_t *meta = &qdb_meta[hd];
-	if ((meta->flags & QH_CACHE) && (meta->flags & QH_AINDEX)) {
+	qdb_type_t *kt = meta->type[QDB_KEY];
+	if ((meta->flags & QH_CACHE) && kt == &qdb_unsigned) {
 		unsigned id = * (unsigned *) key_r;
 		return meta->cache + (sizeof(unsigned) + meta->type[QDB_VALUE >> 1]->len) * id;
 	}
@@ -601,14 +714,21 @@ void qdb_del(unsigned hd, void *key, void *value) {
 	}
 
 	qdb_meta_t *meta = &qdb_meta[hd];
+	qdb_cur_t c;
 
-	if (meta->flags & QH_AINDEX) {
-		idm_del(&meta->idm, * (unsigned *) key);
+	qdb_type_t *kt = meta->type[QDB_KEY];
+	if (kt == &qdb_unsigned) {
+		if (meta->flags & QH_AINDEX)
+			idm_del(&meta->idm, * (unsigned *) key);
+		else if (meta->flags & QH_DUP)
+			goto normal;
+
 		qdb_idel(hd, key, sizeof(unsigned));
 		return;
 	}
 
-	qdb_cur_t c = qdb_iter(hd, key);
+normal:
+	c = qdb_iter(hd, key);
 
 	while (qdb_next(NULL, NULL, &c))
 		qdb_cdel(&c);
@@ -635,13 +755,74 @@ qdb_iter(unsigned hd, void *key) {
 	memset(&internal->key, 0, sizeof(DBT));
 	memset(&internal->data, 0, sizeof(DBT));
 
-	if (!key && (meta->flags & QH_CACHE)) {
+	if (meta->flags & QH_CACHE) {
+		qdb_type_t *kt = meta->type[QDB_KEY];
+
+		char *c;
+		if (!key) {
+			if (meta->flags & QH_DUP) {
+				// TODO not supported (kt != vt || kt != qdb_unsigned)
+				c = meta->cache;
+
+				cur.flags = QH_CACHE | QH_NOT_FIRST;
+				internal->key.data = c;
+				internal->key.size = 0;
+				internal->data.size = sizeof(unsigned);
+				internal->data.data = c + sizeof(unsigned);
+				return cur;
+			}
+
+			cur.flags = QH_CACHE;
+			internal->key.data = meta->cache;
+			internal->key.size = meta->type[QDB_KEY]->len;
+			internal->data.size = meta->type[QDB_VALUE >> 1]->len;
+			internal->data.data = meta->cache + kt->len;
+			return cur;
+		}
+
+		if (kt != &qdb_unsigned)
+			goto normal;
+
+		qdb_type_t *vt = meta->type[QDB_VALUE >> 1];
+		unsigned id = * (unsigned *) key;
+
+		if (id == qdb_meta_id) {
+			internal->key.data = NULL;
+			return cur;
+		}
+
+		if (meta->flags & QH_DUP) {
+			/* goto normal; // TODO remove this */
+			/* if (kt != vt) */
+			/* 	goto normal; */
+
+			cur.flags = QH_CACHE | QH_NOT_FIRST;
+
+			c = meta->cache + id * (sizeof(unsigned) + sizeof(struct idmap));
+
+			internal->key.data = c;
+			fprintf(stderr, "going contents! %p\n", ((struct idmap *) c + sizeof(unsigned))->map);
+			internal->key.size = sizeof(unsigned);
+			internal->data.size = 0;
+			fprintf(stderr, "contents! %u iter %p - %u %p\n", hd, key, id);
+			return cur;
+		}
+
+		c = meta->cache
+			+ id * (sizeof(unsigned) + vt->len);
+
 		cur.flags = QH_CACHE;
-		internal->key.data = meta->cache;
-		internal->key.size = meta->type[QDB_KEY]->len;
-		internal->data.size = meta->type[QDB_VALUE >> 1]->len;
+		internal->key.data = c;
+		internal->key.size = sizeof(unsigned);
+		internal->data.size = vt->len;
+		if (* (unsigned *) c != id)
+			internal->data.data = NULL;
+		else
+			internal->data.data = c + sizeof(unsigned);
+
 		return cur;
 	}
+normal:
 
 	db->cursor(db, hd && (meta->flags & QH_TXN)
 			? txnl_peek(&qdb_config.txnl)
@@ -670,25 +851,85 @@ int
 qdb_next(void *key, void *value, qdb_cur_t *cur)
 {
 	if (cur->flags & QH_CACHE) {
+		char *c;
 		struct qdb_internal *internal = cur->internal;
 		qdb_meta_t *meta = &qdb_meta[internal->hd];
-		char *c = internal->key.data;
-		register size_t kl = internal->key.size,
-			 vl = internal->data.size,
+		register size_t kl = meta->type[QDB_KEY]->len,
+			 vl = meta->type[QDB_VALUE >> 1]->len,
 			 il = kl + vl;
+cagain:
+		c = internal->key.data;
+
+		if (!c)
+			return 0;
+
+		if (cur->flags & QH_NOT_FIRST) {
+			vl = sizeof(struct idmap);
+			il = kl + vl;
+		}
 
 		if (c >= meta->cache + meta->cache_n * il)
 			return 0;
 
-		if (key) {
-			memcpy(key, c, kl);
-			memcpy(value, c + kl, vl);
+		unsigned v;
+
+		v = * (unsigned *) c;
+
+		if (internal->hd == 14)
+			fprintf(stderr, "v %u!\n", * (unsigned *) c);
+
+		if (v == qdb_meta_id) {
+			c += il;
+			internal->key.data = c;
+			internal->data.data = c + kl;
+			internal->data.size = 0;
+			goto cagain;
 		}
 
-		if (meta->flags & QH_AINDEX)
-			return 0;
+		if (key)
+			memcpy(key, c, kl);
 
-		internal->key.data = c + il;
+		c += kl;
+
+		if (!(cur->flags & QH_NOT_FIRST)) {
+			if (value)
+				memcpy(value, c, vl);
+
+			internal->key.data = c + vl;
+			return 1;
+		}
+
+		struct idmap *idmap = (struct idmap *) internal->key.data + sizeof(unsigned);
+
+		c = (char *) idmap;
+		v = idmap->omap[(unsigned) internal->data.size];
+
+		if (internal->hd == 14)
+			fprintf(stderr, "iv %u!\n", v);
+
+		if (v == qdb_meta_id) {
+			if (internal->key.size) {
+				fprintf(stderr, "keyed! ret!\n");
+				return 0;
+			}
+			c += vl;
+			internal->key.data = c;
+			internal->data.data = c + kl;
+			internal->data.size = 0;
+			goto cagain;
+		}
+
+		v = ((struct idmap *) c)->omap[(unsigned) internal->data.size];
+
+		if (value)
+			memcpy(value, &v, sizeof(v));
+
+		if (internal->data.size >= idmap->n) {
+			internal->key.data = (char *) internal->key.data + sizeof(unsigned) + sizeof(struct idmap);
+			internal->data.size = 0;
+		} else
+			internal->data.size++;
+
 		return 1;
 	}
 

@@ -213,6 +213,9 @@ static inline DB_TXN *qdb_begin(void) {
 
 /* commit a transation */
 static inline void qdb_commit(void) {
+	if (!qdb_config.env)
+		return;
+
 	DB_TXN *txn = txnl_pop(&qdb_config.txnl);
 
 	if (!txn) {
@@ -226,6 +229,9 @@ static inline void qdb_commit(void) {
 
 /* abort a transation */
 static inline void qdb_abort(void) {
+	if (!qdb_config.env)
+		return;
+
 	DB_TXN *txn = txnl_pop(&qdb_config.txnl);
 
 	if (!txn) {
@@ -427,10 +433,8 @@ void qdb_env_open(DB_ENV *env, char *path, unsigned flags);
 
 /* abort a transation */
 static inline void qdb_checkpoint(unsigned kbytes, unsigned min, unsigned flags) {
-	if (!qdb_config.env) {
-		qdblog(LOG_WARNING, "qdb_checkpoint: no env\n");
+	if (!qdb_config.env)
 		return;
-	}
 
 	qdb_config.env->txn_checkpoint(qdb_config.env, kbytes, min, flags);
 }
