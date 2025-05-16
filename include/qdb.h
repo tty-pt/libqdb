@@ -97,6 +97,17 @@ typedef struct {
 	unsigned extra;
 } qdb_smeta_t;
 
+struct idmap {
+	unsigned *map, // buckets point to omap positions
+		 *omap; // these map to ids
+
+	char	 *vmap; // these map to values
+
+	unsigned min, m, n, last;
+
+	size_t value_len;
+};
+
 /* we also have an in-memory metadata for each */
 typedef struct meta {
 	unsigned flags, phd;
@@ -104,6 +115,7 @@ typedef struct meta {
 	struct idm idm;
 	char type_str[2][8];
 	qdb_type_t *type[2];
+	struct idmap cache;
 } qdb_meta_t;
 
 extern qdb_meta_t qdb_meta[QDB_DBS_MAX];
@@ -176,7 +188,10 @@ enum qdb_flags {
 	/* auto-index / auto-key (unsigned) */
 	QH_AINDEX = 32,
 
-	/* values 64 and 128 are reserved for the future */
+	/* value 64 is reserved for the future */
+
+	/* environment flag for threads */
+	QH_THREAD = 128,
 
 	/* key is two combined values */
 	QH_THRICE = 256,
@@ -190,6 +205,9 @@ typedef struct {
 
 /* begin a transaction */
 static inline DB_TXN *qdb_begin(void) {
+	if (!qdb_config.env)
+		return NULL;
+
 	DB_TXN *txn;
 
 	if (qdb_config.env->txn_begin(qdb_config.env, txnl_peek(&qdb_config.txnl), &txn, 0)) {
@@ -203,6 +221,9 @@ static inline DB_TXN *qdb_begin(void) {
 
 /* commit a transation */
 static inline void qdb_commit(void) {
+	if (!qdb_config.env)
+		return;
+
 	DB_TXN *txn = txnl_pop(&qdb_config.txnl);
 
 	if (!txn) {
@@ -216,6 +237,9 @@ static inline void qdb_commit(void) {
 
 /* abort a transation */
 static inline void qdb_abort(void) {
+	if (!qdb_config.env)
+		return;
+
 	DB_TXN *txn = txnl_pop(&qdb_config.txnl);
 
 	if (!txn) {
@@ -417,6 +441,9 @@ void qdb_env_open(DB_ENV *env, char *path, unsigned flags);
 
 /* abort a transation */
 static inline void qdb_checkpoint(unsigned kbytes, unsigned min, unsigned flags) {
+	if (!qdb_config.env)
+		return;
+
 	qdb_config.env->txn_checkpoint(qdb_config.env, kbytes, min, flags);
 }
 
