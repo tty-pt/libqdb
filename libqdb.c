@@ -58,7 +58,7 @@ static inline void idmap_put(struct idmap *idmap, unsigned id, void *value) {
 	unsigned n = idmap->map[id];
 
 	if (idmap->n > n && idmap->omap[n] == id) {
-		memcpy(&idmap->vmap[id * idmap->value_len], value, idmap->value_len);
+		memcpy(idmap->vmap + id * idmap->value_len, value, idmap->value_len);
 		return;
 	}
 
@@ -191,11 +191,6 @@ int
 qdb_putc(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len) {
 	qdb_meta_t *meta = &qdb_meta[hd];
 
-	if ((meta->flags & QH_MEMORY_ONLY) && is_cached(meta)) {
-		cached_put(meta, key_r, value);
-		return 0;
-	}
-
 	unsigned id;
 	DB *db = qdb_dbs[hd];
 	DBT key, data;
@@ -210,6 +205,15 @@ qdb_putc(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len
 		unsigned last;
 		for (last = meta->idm.last; last < id; last++)
 			idml_push(&meta->idm.free, last);
+	}
+
+	if ((meta->flags & QH_MEMORY_ONLY) && is_cached(meta)) {
+		unsigned id = * (unsigned *) key_r;
+
+		if (id != qdb_meta_id) {
+			cached_put(meta, key_r, value);
+			return 0;
+		}
 	}
 
 	memset(&key, 0, sizeof(DBT));
@@ -234,7 +238,7 @@ qdb_putc(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len
 	if (ret) {
 		if (ret != DB_KEYEXIST || !dupes)
 			qdblog(LOG_WARNING, "qdb_putc\n");
-	} else if (is_cached(meta))
+	} else if (is_cached(meta) && id != qdb_meta_id)
 		cached_put(meta, key_r, value);
 
 	return ret;
@@ -814,7 +818,7 @@ cagain:
 	}
 
 	memcpy(key, &id, sizeof(id));
-	memcpy(value, meta->cache.vmap + id * meta->cache.value_len, sizeof(id));
+	memcpy(value, meta->cache.vmap + id * meta->cache.value_len, meta->cache.value_len);
 
 	internal->key.size++;
 	return 1;
@@ -828,8 +832,14 @@ qdb_next(void *key, void *value, qdb_cur_t *cur)
 	int flags;
 	qdb_meta_t *meta = &qdb_meta[internal->hd];
 
-	if (is_cached(meta))
-		return cached_next(meta, internal, key, value);
+	if (is_cached(meta)) {
+		if (!cached_next(meta, internal, key, value)) {
+			free(internal);
+			cur->internal = NULL;
+			return 0;
+		}
+		return 1;
+	}
 
 	flags = DB_FIRST;
 

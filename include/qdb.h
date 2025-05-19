@@ -103,7 +103,7 @@ struct idmap {
 
 	char	 *vmap; // these map to values
 
-	unsigned min, m, n, last;
+	unsigned m, n;
 
 	size_t value_len;
 };
