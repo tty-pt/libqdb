@@ -12,7 +12,10 @@ char value_buf[BUFSIZ], key_buf[BUFSIZ], *col;
 
 unsigned qhds, ahds, qhds_n = 0, ahds_n = 0;
 
-unsigned reverse = 0, bail = 0;
+unsigned reverse = 0, bail = 0, print_keys = 0;
+
+unsigned qdb_get_type;
+char *qdb_get_buf;
 
 void
 usage(char *prog)
@@ -29,6 +32,7 @@ usage(char *prog)
 	fprintf(stderr, "        -d KEY[:VAL]     delete key/value pair(s)\n");
 	fprintf(stderr, "        -g KEY           get value(s) of a key\n");
 	fprintf(stderr, "        -x               when printing associations, bail on first result\n");
+	fprintf(stderr, "        -k               also print keys (for get and rand).\n");
 	fprintf(stderr, "    'k' and 'v' are key and value types. Supported values:\n");
 	fprintf(stderr, "         u               unsigned\n");
 	fprintf(stderr, "         s               string\n");
@@ -77,6 +81,13 @@ static inline void *rec_query(unsigned qhds, char *tbuf, char *buf, unsigned tmp
 static inline int gen_cond(int is_value) {
 	qdb_cur_t c = qdb_iter(qhds, NULL);
 	unsigned aux, rev = !reverse, aux_hd;
+	if (rev) {
+		qdb_get_type = QDB_KEY;
+		qdb_get_buf = key_buf;
+	} else {
+		qdb_get_type = QDB_VALUE;
+		qdb_get_buf = value_buf;
+	}
 	char *type = qdb_type(prim_hd, (is_value ? QDB_KEY : QDB_VALUE) | rev);
 
 	while (qdb_next(&aux, &aux_hd, &c)) {
@@ -166,9 +177,12 @@ static inline void assoc_print(void) {
 }
 
 static inline void _gen_get(void) {
-	qdb_print(prim_hd, QDB_KEY, key_buf);
-	putchar(' ');
-	qdb_print(prim_hd, QDB_VALUE, value_buf);
+	if (print_keys) {
+		qdb_print(prim_hd, QDB_KEY, key_buf);
+		putchar(' ');
+		qdb_print(prim_hd, QDB_VALUE, value_buf);
+	} else
+		qdb_print(prim_hd, qdb_get_type, qdb_get_buf);
 	assoc_print();
 	printf("\n");
 }
@@ -229,10 +243,15 @@ static void gen_list(void) {
 
 	c = qdb_piter(prim_hd, NULL, reverse);
 
+	qdb_get_type = QDB_VALUE;
+	qdb_get_buf = value_buf;
+	count = print_keys;
+	print_keys = 1;
 	while (qdb_next(key_buf, value_buf, &c)) {
 		rec_query(qhds, key_buf, value_buf, !cond);
 		_gen_get();
 	}
+	print_keys = count;
 }
 
 static inline void gen_put(void) {
@@ -305,7 +324,7 @@ unsigned gen_open(char *fname, unsigned flags) {
 int
 main(int argc, char *argv[])
 {
-	static char *optstr = "xla:q:p:d:g:rR:L:?";
+	static char *optstr = "kxla:q:p:d:g:rR:L:?";
 	char *fname = argv[argc - 1], ch;
 	unsigned flags = QH_RDONLY;
 
@@ -335,6 +354,9 @@ main(int argc, char *argv[])
 			break;
 		case 'x':
 			bail = 1;
+			break;
+		case 'k':
+			print_keys = 1;
 			break;
 		case 'p':
 		case 'd':
