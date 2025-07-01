@@ -14,6 +14,9 @@ unsigned qhds, ahds, qhds_n = 0, ahds_n = 0;
 
 unsigned reverse = 0, bail = 0;
 
+unsigned qdb_get_type;
+char *qdb_get_buf;
+
 void
 usage(char *prog)
 {
@@ -77,6 +80,13 @@ static inline void *rec_query(unsigned qhds, char *tbuf, char *buf, unsigned tmp
 static inline int gen_cond(int is_value) {
 	qdb_cur_t c = qdb_iter(qhds, NULL);
 	unsigned aux, rev = !reverse, aux_hd;
+	if (rev) {
+		qdb_get_type = QDB_KEY;
+		qdb_get_buf = key_buf;
+	} else {
+		qdb_get_type = QDB_VALUE;
+		qdb_get_buf = value_buf;
+	}
 	char *type = qdb_type(prim_hd, (is_value ? QDB_KEY : QDB_VALUE) | rev);
 
 	while (qdb_next(&aux, &aux_hd, &c)) {
@@ -166,9 +176,7 @@ static inline void assoc_print(void) {
 }
 
 static inline void _gen_get(void) {
-	qdb_print(prim_hd, QDB_KEY, key_buf);
-	putchar(' ');
-	qdb_print(prim_hd, QDB_VALUE, value_buf);
+	qdb_print(prim_hd, qdb_get_type, qdb_get_buf);
 	assoc_print();
 	printf("\n");
 }
@@ -229,8 +237,12 @@ static void gen_list(void) {
 
 	c = qdb_piter(prim_hd, NULL, reverse);
 
+	qdb_get_type = QDB_VALUE;
+	qdb_get_buf = value_buf;
 	while (qdb_next(key_buf, value_buf, &c)) {
 		rec_query(qhds, key_buf, value_buf, !cond);
+		qdb_print(prim_hd, QDB_KEY, key_buf);
+		putchar(' ');
 		_gen_get();
 	}
 }
