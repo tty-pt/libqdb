@@ -207,7 +207,7 @@ qdb_putc(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len
 			idml_push(&meta->idm.free, last);
 	}
 
-	if ((meta->flags & QH_MEMORY_ONLY) && is_cached(meta)) {
+	if ((meta->flags & QH_TMP) && is_cached(meta)) {
 		unsigned id = * (unsigned *) key_r;
 
 		if (id != qdb_meta_id) {
@@ -414,8 +414,8 @@ _qdb_openc(const char *file, const char *database, int mode, unsigned flags, int
 			.extra = 0,
 		};
 
-		strcpy(put_smeta.key, key_tid);
-		strcpy(put_smeta.value, value_tid);
+		strlcpy(put_smeta.key, key_tid, sizeof(put_smeta.key));
+		strlcpy(put_smeta.value, value_tid, sizeof(put_smeta.key));
 
 		qdb_putc(id, &qdb_meta_id, sizeof(qdb_meta_id),
 				&put_smeta, sizeof(put_smeta));
@@ -432,8 +432,10 @@ out:
 	strcpy(qdb_meta[id].type_str[QDB_KEY], key_tid);
 	strcpy(qdb_meta[id].type_str[QDB_VALUE >> 1], value_tid);
 	qdb_meta[id].phd = qdb_meta_id;
-	if (!file)
-		flags |= QH_MEMORY_ONLY;
+	if (flags & QH_TMP)
+		file = NULL;
+	else if (!file)
+		flags |= QH_TMP;
 	qdb_meta[id].flags = flags;
 	qdb_meta[id].type[QDB_KEY] = key_type;
 	qdb_meta[id].type[QDB_VALUE >> 1] = value_type;
@@ -684,7 +686,7 @@ void qdb_del(unsigned hd, void *key, void *value) {
 
 		if (id != qdb_meta_id) {
 			cached_del(meta, id, value);
-			if (meta->flags & QH_MEMORY_ONLY)
+			if (meta->flags & QH_TMP)
 				return;
 		}
 	}
@@ -879,6 +881,10 @@ again:
 int
 qdb_cdel(qdb_cur_t *cur) {
 	struct qdb_internal *internal = cur->internal;
+	if (!internal->cursor) {
+		qdblog(LOG_ERR, "qdb_cdel: tried deleting with cursor when not set");
+		return 1;
+	}
 	return internal->cursor->c_del(internal->cursor, 0);
 }
 

@@ -200,7 +200,7 @@ enum qdb_flags {
 	/* TODO this optimizes cached dbs - why not
 	 * just update the file on sync, and then we
 	 * can have the optimization everywhere? */
-	QH_MEMORY_ONLY = 512,
+	QH_TMP = 512,
 };
 
 /* we use these cursors for iteration */
