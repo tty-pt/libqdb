@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
 #include <sys/queue.h>
 #include <sys/types.h>
 #include <syslog.h>
@@ -58,7 +59,6 @@
 	}
 
 #define QDB_DBS_MAX (64 * 512)
-#define QHD_NOT_FOUND qdb_meta_id;
 
 typedef void qdb_print_t(void *value);
 typedef size_t qdb_measure_t(void *value);
@@ -121,7 +121,7 @@ typedef struct meta {
 extern qdb_meta_t qdb_meta[QDB_DBS_MAX];
 
 extern qdb_type_t qdb_string, qdb_unsigned;
-extern unsigned types_hd, qdb_meta_id, qdb_min;
+extern unsigned types_hd, qdb_min;
 
 /* we have this config object mostly to avoid having
  * to specify much when opening databases */
@@ -147,6 +147,7 @@ static inline void qdblog_perror(char *str) {
 __attribute__((noreturn))
 static inline void qdblog_err(char *str) {
         qdblog_perror(str);
+	raise(SIGTRAP);
         exit(EXIT_FAILURE);
 }
 
@@ -295,6 +296,12 @@ qdb_put(unsigned hd, void *key, void *value)
 		if (!strcmp(qdb_type(hd, QDB_KEY), "u"))
 			id = * (unsigned *) key;
 
+		if (id > (((unsigned) -1) >> 1)) {
+			qdblog(LOG_WARNING, "qdb_put BAD ID\n");
+			raise(SIGTRAP);
+			return QDB_NOTFOUND;
+		}
+
 		if ((flags & QH_THRICE) && (flags & QH_DUP)) {
 			key_len = qdb_len(hd + 2, QDB_KEY, key);
 			value_len = qdb_len(hd + 2, QDB_VALUE, value);
@@ -312,7 +319,7 @@ qdb_put(unsigned hd, void *key, void *value)
 
 	value_len = qdb_len(hd, QDB_VALUE, value);
 	if (qdb_putc(hd, key, key_len, value, value_len))
-		return (unsigned) qdb_meta_id;
+		return QDB_NOTFOUND;
 
 	return id;
 }
