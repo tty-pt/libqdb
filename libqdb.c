@@ -44,15 +44,14 @@ static inline struct idmap idmap_init(size_t value_len) {
 
 static inline void idmap_put(struct idmap *idmap, unsigned id, void *value) {
 	if (idmap->m <= id) {
-		unsigned old_m = idmap->m;
 		idmap->m = id;
-		idmap->m *= 2;
+		idmap->m *= 2; // technically this could give a number smaller
+			       // than last idmap->m, this just doesn't happen
+			       // because we have a protection against insertion
+			       // of very large values as idmap keys
 		idmap->map = realloc(idmap->map, idmap->m * sizeof(unsigned));
 		idmap->omap = realloc(idmap->omap, idmap->m * sizeof(unsigned));
 		idmap->vmap = realloc(idmap->vmap, idmap->m * idmap->value_len);
-		memset(idmap->map + old_m, 0, (idmap->m - old_m) * sizeof(unsigned));
-		memset(idmap->omap + old_m, 0, (idmap->m - old_m) * sizeof(unsigned));
-		memset(idmap->vmap + old_m * idmap->value_len, 0, (idmap->m - old_m) * idmap->value_len);
 	}
 
 	unsigned n = idmap->map[id];
@@ -384,6 +383,11 @@ _qdb_openc(const char *file, const char *database, int mode, unsigned flags, int
 		if (db->set_flags(db, DB_DUP))
 			qdblog_err("qdb_openc: set_flags\n");
 
+	if (flags & QH_TMP)
+		file = NULL;
+	else if (!file)
+		flags |= QH_TMP;
+
 	dbflags = (qdb_config.flags & QH_THREAD ? DB_THREAD : 0) | (flags & QH_RDONLY ? DB_RDONLY : DB_CREATE);
 	if (db->open(db, txn, file, database, type, dbflags, mode))
 		qdblog_err("qdb_openc: open\n");
@@ -423,10 +427,6 @@ out:
 	strcpy(qdb_meta[id].type_str[QDB_KEY], key_tid);
 	strcpy(qdb_meta[id].type_str[QDB_VALUE >> 1], value_tid);
 	qdb_meta[id].phd = (unsigned) -1;
-	if (flags & QH_TMP)
-		file = NULL;
-	else if (!file)
-		flags |= QH_TMP;
 	qdb_meta[id].flags = flags;
 	qdb_meta[id].type[QDB_KEY] = key_type;
 	qdb_meta[id].type[QDB_VALUE >> 1] = value_type;
