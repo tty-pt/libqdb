@@ -391,8 +391,11 @@ _qdb_openc(const char *file, const char *database, int mode, unsigned flags, int
 		database = NULL;
 	}
 
-	dbflags = (qdb_config.flags & QH_THREAD ? DB_THREAD : 0)
-		| (flags & QH_RDONLY ? DB_RDONLY : DB_CREATE);
+	dbflags = qdb_config.flags & QH_THREAD ? DB_THREAD : 0;
+	if (file && access(file, R_OK) == 0 && (flags & QH_RDONLY))
+		dbflags |= DB_RDONLY;
+	else
+		dbflags |= DB_CREATE;
 
 #if 0
 	fprintf(stderr, "qdb_openc ? %s %s %u %s %s %u %u\n",
@@ -414,7 +417,7 @@ _qdb_openc(const char *file, const char *database, int mode, unsigned flags, int
 		key_tid = smeta->key;
 		value_tid = smeta->value;
 		flags = smeta->flags;
-	} else {
+	} else if (!(flags & QH_RDONLY)) {
 		qdb_smeta_t put_smeta = {
 			.flags = flags,
 			.extra = 0,
