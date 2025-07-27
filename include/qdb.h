@@ -296,7 +296,7 @@ qdb_put(unsigned hd, void *key, void *value)
 		if (!strcmp(qdb_type(hd, QDB_KEY), "u"))
 			id = * (unsigned *) key;
 
-		if (id > (((unsigned) -1) >> 1)) {
+		if (id > (((unsigned) -1) >> 7)) {
 			qdblog(LOG_WARNING, "qdb_put BAD ID\n");
 			raise(SIGTRAP);
 			return QDB_NOTFOUND;
