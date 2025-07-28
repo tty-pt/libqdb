@@ -14,8 +14,10 @@ enum {
 	QH_REPURPOSE = 64, // internal iteration flag
 };
 
+#ifdef QDB_STORED_META
 char *qdb_meta_id = "__qdb_meta_key__";
 unsigned qdb_meta_id_len = 17;
+#endif
 qdb_meta_t qdb_meta[QDB_DBS_MAX];
 static DB *qdb_dbs[QDB_DBS_MAX];
 unsigned types_hd = QDB_DBS_MAX - 1, qdb_min = 0;
@@ -192,7 +194,11 @@ qdb_putc(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len
 	DBT key, data;
 	int ret;
 
+#ifdef QDB_STORED_META
 	if ((meta->flags & QH_AINDEX) && memcmp(key_r, qdb_meta_id, qdb_meta_id_len)) {
+#else
+	if (meta->flags & QH_AINDEX) {
+#endif
 		unsigned id = * (unsigned *) key_r;
 
 		if (meta->idm.last < id)
@@ -205,7 +211,11 @@ qdb_putc(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len
 			idml_push(&meta->idm.free, last);
 	}
 
+#ifdef QDB_STORED_META
 	if ((meta->flags & QH_TMP) && is_cached(meta) && memcmp(key_r, qdb_meta_id, qdb_meta_id_len)) {
+#else
+	if ((meta->flags & QH_TMP) && is_cached(meta)) {
+#endif
 		cached_put(meta, key_r, value);
 		return 0;
 	}
@@ -232,7 +242,11 @@ qdb_putc(unsigned hd, void *key_r, size_t key_len, void *value, size_t value_len
 	if (ret) {
 		if (ret != DB_KEYEXIST || !dupes)
 			qdblog(LOG_WARNING, "qdb_putc\n");
+#ifdef QDB_STORED_META
 	} else if (is_cached(meta) && memcmp(key_r, qdb_meta_id, qdb_meta_id_len))
+#else
+	} else if (is_cached(meta))
+#endif
 		cached_put(meta, key_r, value);
 
 	return ret;
@@ -267,7 +281,11 @@ void *qdb_getc(unsigned hd, size_t *size, void *key_r, size_t key_len)
 
 	qdb_meta_t *meta = &qdb_meta[hd];
 
+#ifdef QDB_STORED_META
 	if (is_cached(meta) && memcmp(key_r, qdb_meta_id, qdb_meta_id_len))
+#else
+	if (is_cached(meta))
+#endif
 		return cached_get(meta, * (unsigned *) key_r, size);
 	
 	db = qdb_dbs[hd];
@@ -397,7 +415,7 @@ _qdb_openc(const char *file, const char *database, int mode, unsigned flags, int
 	else
 		dbflags |= DB_CREATE;
 
-#if 0
+#ifdef QDB_DEBUG
 	fprintf(stderr, "qdb_openc ? %s %s %u %s %s %u %u\n",
 			file, database,
 			flags, key_tid, value_tid, flags, dbflags);
@@ -409,6 +427,7 @@ _qdb_openc(const char *file, const char *database, int mode, unsigned flags, int
 	if (flags & (QH_SEC | QH_REPURPOSE))
 		goto out;
 
+#ifdef QDB_STORED_META
 	size_t val_len;
 	qdb_smeta_t *smeta = 
 		qdb_getc(id, &val_len, qdb_meta_id, qdb_meta_id_len);
@@ -429,6 +448,7 @@ _qdb_openc(const char *file, const char *database, int mode, unsigned flags, int
 		qdb_putc(id, qdb_meta_id, qdb_meta_id_len,
 				&put_smeta, sizeof(put_smeta));
 	}
+#endif
 
 	qdb_get(types_hd, &key_type, key_tid);
 	qdb_get(types_hd, &value_type, value_tid);
@@ -450,7 +470,7 @@ out:
 				? sizeof(struct idmap)
 				: value_type->len);
 
-#if 0
+#ifdef QDB_DEBUG
 	fprintf(stderr, "qdb_openc %u %s %s %u %s %s %u %u\n",
 			id, file, database,
 			flags, key_tid, value_tid, flags, dbflags);
@@ -468,7 +488,6 @@ unsigned
 qdb_openc(const char *file, const char *database, int mode, unsigned flags, int type, char *key_tid, char *value_tid)
 {
 	char buf[BUFSIZ];
-	size_t len;
 
 	if (!(flags & QH_THRICE))
 		return _qdb_openc(file, database, mode, flags, type, key_tid, value_tid);
@@ -483,17 +502,23 @@ qdb_openc(const char *file, const char *database, int mode, unsigned flags, int 
 	unsigned phd = _qdb_openc(file, buf, mode, flags, DB_HASH, key_tid, value_tid);
 	unsigned read_only = flags & QH_RDONLY;
 
+#ifdef QDB_STORED_META
+	size_t len;
 	qdb_smeta_t *smeta = qdb_getc(phd, &len, qdb_meta_id, qdb_meta_id_len);
-	key_tid = smeta->key;
-	value_tid = smeta->value;
-	flags = smeta->flags;
+	if (smeta) {
+		key_tid = smeta->key;
+		value_tid = smeta->value;
+		flags = smeta->flags;
+	}
+#endif
+
 	flags &= ~(QH_THRICE | QH_AINDEX);
 	flags |= QH_DUP | QH_SEC;
 	if (read_only)
 		flags |= QH_RDONLY;
 
 	// for secondaries, we don't need dbl keys
-	if (smeta->flags & QH_DUP)
+	if (flags & QH_DUP)
 		key_tid = value_tid;
 
 	snprintf(buf, sizeof(buf), "%shd", database);
@@ -545,8 +570,10 @@ map_assoc(DB *sec, const DBT *key, const DBT *data, DBT *result)
 	unsigned hd;
 	void *skey;
 
+#ifdef QDB_STORED_META
 	if (!memcmp(key->data, qdb_meta_id, qdb_meta_id_len))
 		return DB_DONOTINDEX;
+#endif
 
 	if (qdb_get(0, &hd, &sec)) {
 		// TODO WARNING
@@ -686,7 +713,11 @@ static inline void cached_del(qdb_meta_t *meta, unsigned id, void *value)
 void qdb_del(unsigned hd, void *key, void *value) {
 	qdb_meta_t *meta = &qdb_meta[hd];
 
+#ifdef QDB_STORED_META
 	if (is_cached(meta) && memcmp(key, qdb_meta_id, qdb_meta_id_len)) {
+#else
+	if (is_cached(meta)) {
+#endif
 		cached_del(meta, * (unsigned *) key, value);
 		if (meta->flags & QH_TMP)
 			return;
@@ -846,7 +877,9 @@ qdb_next(void *key, void *value, qdb_cur_t *cur)
 
 	flags = DB_FIRST;
 
+#ifdef QDB_STORED_META
 again:
+#endif
 	if (cur->flags & QH_DUP) {
 		if (cur->flags & QH_NOT_FIRST)
 			flags = DB_NEXT_DUP;
@@ -865,8 +898,10 @@ again:
 		return 0;
 	}
 
+#ifdef QDB_STORED_META
 	if (!memcmp(internal->pkey.data, qdb_meta_id, qdb_meta_id_len))
 		goto again;
+#endif
 
 	if (key) {
 		memcpy(key, internal->pkey.data, internal->pkey.size);

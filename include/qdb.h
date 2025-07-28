@@ -88,6 +88,7 @@ enum qdb_type {
 /* associations are made using these callbacks */
 typedef int (*qdb_assoc_t)(void **data, void *key, void *value);
 
+#ifdef QDB_STORED_META
 /* we store some metadata in the database to know
  * types and stuff later on */
 typedef struct {
@@ -96,6 +97,7 @@ typedef struct {
 	unsigned flags;
 	unsigned extra;
 } qdb_smeta_t;
+#endif
 
 struct idmap {
 	unsigned *map, // buckets point to omap positions
