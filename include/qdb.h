@@ -199,10 +199,7 @@ enum qdb_flags {
 	/* key is two combined values */
 	QH_THRICE = 256,
 
-	/* internal flag - indicates the db lives in memory only */
-	/* TODO this optimizes cached dbs - why not
-	 * just update the file on sync, and then we
-	 * can have the optimization everywhere? */
+	/* the database lives in memory */
 	QH_TMP = 512,
 };
 
