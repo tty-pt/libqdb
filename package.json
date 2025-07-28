@@ -1,6 +1,6 @@
 {
   "name": "@tty-pt/qdb",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "C lib for easy database usage",
   "main": "index.js",
   "scripts": {

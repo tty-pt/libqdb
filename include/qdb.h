@@ -279,7 +279,7 @@ static inline char *qdb_type(unsigned hd, unsigned type) {
 	if (otype & QDB_REVERSE)
 		type = !type;
 	if (qdb_meta[hd].flags & QH_THRICE)
-		hd ++;
+		hd += 2;
 	return qdb_meta[hd].type_str[type];
 }
 
@@ -436,7 +436,7 @@ static inline void qdb_print(unsigned hd, unsigned type, void *thing) {
 	if (otype & QDB_REVERSE)
 		type = !type;
 	if (qdb_meta[hd].flags & QH_THRICE)
-		hd ++;
+		hd += 2;
 	qdb_meta[hd].type[type]->print(thing);
 }
 

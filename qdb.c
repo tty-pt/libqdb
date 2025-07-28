@@ -35,8 +35,8 @@ usage(char *prog)
 	fprintf(stderr, "        -k               also print keys (for get and rand).\n");
 	fprintf(stderr, "    'k' and 'v' are key and value types. Supported values:\n");
 	fprintf(stderr, "         u               unsigned\n");
-	fprintf(stderr, "         s               string\n");
-	fprintf(stderr, "         a               key only! unsigned with automatic index\n");
+	fprintf(stderr, "         s               string (default value type)\n");
+	fprintf(stderr, "         a               key only! unsigned automatic index (default)\n");
 	fprintf(stderr, "         2<base-type>    key only! allows duplicates\n");
 	fprintf(stderr, "\n");
 	fprintf(stderr, "Use '.' as the KEY for all keys!\n");
