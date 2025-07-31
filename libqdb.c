@@ -14,7 +14,6 @@ enum {
 	QH_REPURPOSE = 64, // internal iteration flag
 };
 
-qdb_meta_t qdb_meta[QDB_DBS_MAX];
 static DB *qdb_dbs[QDB_DBS_MAX];
 unsigned types_hd = QDB_DBS_MAX - 1, qdb_min = 0;
 struct txnl txnl_empty;
@@ -25,6 +24,29 @@ struct qdb_config qdb_config = {
 	.file = NULL,
 	.env = NULL,
 };
+
+struct idmap {
+	unsigned *map, // buckets point to omap positions
+		 *omap; // these map to ids
+
+	char	 *vmap; // these map to values
+
+	unsigned m, n;
+
+	size_t value_len;
+};
+
+/* in-memory metadata for each db */
+typedef struct meta {
+	unsigned flags, phd;
+	qdb_assoc_t assoc;
+	struct idm idm;
+	char type_str[2][8];
+	qdb_type_t *type[2];
+	struct idmap cache;
+} qdb_meta_t;
+
+qdb_meta_t qdb_meta[QDB_DBS_MAX];
 
 static inline struct idmap idmap_init(size_t value_len) {
 	struct idmap idmap = {
@@ -386,6 +408,12 @@ _qdb_openc(const char *file, const char *database, int mode, unsigned flags, int
 	meta->type[QDB_KEY] = key_type;
 	meta->type[QDB_VALUE >> 1] = value_type;
 
+#if QDB_DEBUG
+	fprintf(stderr, "qdb_openc? %u %s %s %u %s %s %u\n",
+			id, file, database,
+			flags, key_tid, value_tid, flags);
+#endif
+
 	if ((meta->flags & QH_TMP) && is_cached(meta))
 		goto open_skip;
 
@@ -405,12 +433,6 @@ _qdb_openc(const char *file, const char *database, int mode, unsigned flags, int
 		dbflags |= DB_RDONLY;
 	else
 		dbflags |= DB_CREATE;
-
-#ifdef QDB_DEBUG
-	fprintf(stderr, "qdb_openc ? %s %s %u %s %s %u %u\n",
-			file, database,
-			flags, key_tid, value_tid, flags, dbflags);
-#endif
 
 	if (db->open(db, txn, file, database, type, dbflags, mode))
 		qdblog_err("qdb_openc: open\n");
@@ -947,4 +969,85 @@ void qdb_env_open(DB_ENV *env, char *path, unsigned flags) {
 
 	env->open(env, path, iflags, 0);
 	qdb_config.env = env;
+}
+
+size_t qdb_len(unsigned hd, unsigned type, void *key) {
+	if (!key)
+		return 0;
+	type >>= 1;
+	qdb_type_t *mthing = qdb_meta[hd].type[type];
+	return mthing->len ? mthing->len : mthing->measure(key);
+}
+
+char *qdb_type(unsigned hd, unsigned type) {
+	unsigned otype = type;
+	type >>= 1;
+	if (otype & QDB_REVERSE)
+		type = !type;
+	if (qdb_meta[hd].flags & QH_THRICE)
+		hd += 2;
+	return qdb_meta[hd].type_str[type];
+}
+
+void qdb_print(unsigned hd, unsigned type, void *thing) {
+	unsigned otype = type;
+	type >>= 1;
+	if (otype & QDB_REVERSE)
+		type = !type;
+	if (qdb_meta[hd].flags & QH_THRICE)
+		hd += 2;
+	qdb_meta[hd].type[type]->print(thing);
+}
+
+unsigned
+qdb_put(unsigned hd, void *key, void *value)
+{
+	size_t key_len, value_len;
+	unsigned id = 0, flags = qdb_meta[hd].flags;
+
+	if (key != NULL) {
+		key_len = qdb_len(hd, QDB_KEY, key);
+		if (!strcmp(qdb_type(hd, QDB_KEY), "u"))
+			id = * (unsigned *) key;
+
+		if (id > (((unsigned) -1) >> 7)) {
+			qdblog(LOG_WARNING, "qdb_put %u BAD ID\n", hd);
+			raise(SIGTRAP);
+			return QDB_NOTFOUND;
+		}
+
+		if ((flags & QH_THRICE) && (flags & QH_DUP)) {
+			key_len = qdb_len(hd + 2, QDB_KEY, key);
+			value_len = qdb_len(hd + 2, QDB_VALUE, value);
+			char buf[key_len + value_len];
+			memcpy(buf, key, key_len);
+			memcpy(buf + key_len, value, value_len);
+			return qdb_putc(hd, buf, key_len + value_len, value, value_len);
+		}
+	} else if (qdb_meta[hd].flags & QH_AINDEX) {
+		id = idm_new(&qdb_meta[hd].idm);
+		key = &id;
+		key_len = sizeof(unsigned);
+	} else
+		qdblog_err("qdb_put NULL key without QH_AINDEX");
+
+	value_len = qdb_len(hd, QDB_VALUE, value);
+	if (qdb_putc(hd, key, key_len, value, value_len))
+		return QDB_NOTFOUND;
+
+	return id;
+}
+
+unsigned qdb_flags(unsigned hd) {
+	return qdb_meta[hd].flags & QH_THRICE;
+}
+
+void
+qdb_reg(char *key, size_t len) {
+	qdb_type_t *type = (qdb_type_t *) malloc(sizeof(qdb_type_t));
+	type->measure = NULL;
+	type->print = NULL;
+	type->len = len;
+	type->dbl = NULL;
+	qdb_put(types_hd, key, &type);
 }
