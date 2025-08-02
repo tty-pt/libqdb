@@ -167,6 +167,9 @@ enum qdb_flags {
 
 	/* the database lives in memory */
 	QH_TMP = 512,
+
+	/* qdb_get returns the same as qdb_pget */
+	QH_PGET = 1024,
 };
 
 /* we use these cursors for iteration */
@@ -301,17 +304,7 @@ static inline int qdb_exists(unsigned hd, void *key)
 }
 
 /* get the first value for a given key (type aware) */
-static inline int qdb_get(unsigned hd, void *value, void *key)
-{
-	size_t size;
-	void *value_r = qdb_getc(hd, &size, key, qdb_len(hd, QDB_KEY, key));
-
-	if (!value_r)
-		return 1;
-
-	memcpy(value, value_r, size);
-	return 0;
-}
+int qdb_get(unsigned hd, void *value, void *key);
 
 static inline int qdb_pget(unsigned hd, void *pkey_r, void *key_r) {
 	void *data;

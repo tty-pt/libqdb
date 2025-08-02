@@ -502,6 +502,7 @@ qdb_openc(const char *file, const char *database, int mode, unsigned flags, int 
 	_qdb_openc(file, buf, mode, flags, DB_BTREE, key_tid, value_tid);
 	qdb_assoc(phd + 1, phd, NULL);
 
+	flags |= QH_PGET;
 	snprintf(buf, sizeof(buf), "%srhd", database);
 	_qdb_openc(file, buf, mode, flags, DB_BTREE, value_tid, key_tid);
 	qdb_assoc(phd + 2, phd, qdb_assoc_rhd);
@@ -985,7 +986,7 @@ char *qdb_type(unsigned hd, unsigned type) {
 	if (otype & QDB_REVERSE)
 		type = !type;
 	if (qdb_meta[hd].flags & QH_THRICE)
-		hd += 2;
+		hd += 1;
 	return qdb_meta[hd].type_str[type];
 }
 
@@ -995,7 +996,7 @@ void qdb_print(unsigned hd, unsigned type, void *thing) {
 	if (otype & QDB_REVERSE)
 		type = !type;
 	if (qdb_meta[hd].flags & QH_THRICE)
-		hd += 2;
+		hd += 1;
 	qdb_meta[hd].type[type]->print(thing);
 }
 
@@ -1039,7 +1040,7 @@ qdb_put(unsigned hd, void *key, void *value)
 }
 
 unsigned qdb_flags(unsigned hd) {
-	return qdb_meta[hd].flags & QH_THRICE;
+	return qdb_meta[hd].flags;
 }
 
 void
@@ -1050,4 +1051,22 @@ qdb_reg(char *key, size_t len) {
 	type->len = len;
 	type->dbl = NULL;
 	qdb_put(types_hd, key, &type);
+}
+
+/* get the first value for a given key (type aware) */
+int qdb_get(unsigned hd, void *value, void *key)
+{
+	size_t size;
+	void *value_r;
+
+	if (qdb_meta[hd].flags & QH_PGET)
+		value_r = qdb_pgetc(hd, &size, key);
+	else
+		value_r = qdb_getc(hd, &size, key, qdb_len(hd, QDB_KEY, key));
+
+	if (!value_r)
+		return 1;
+
+	memcpy(value, value_r, size);
+	return 0;
 }
