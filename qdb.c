@@ -287,7 +287,7 @@ static inline void gen_list_missing(void) {
 }
 
 unsigned gen_open(char *fname, unsigned flags) {
-	char buf[BUFSIZ], *key_type = "u", *value_type = "s";
+	char buf[BUFSIZ], *key_type = "s", *value_type = "s";
 
 	strcpy(buf, fname);
 
@@ -313,8 +313,7 @@ unsigned gen_open(char *fname, unsigned flags) {
 				key_type = first_col;
 		} else
 			key_type = first_col;
-	} else
-		flags |= QH_AINDEX;
+	}
 
 	qdb_config.file = buf;
 	qdb_config.mode = flags & QH_RDONLY ? 0644 : 0664;
