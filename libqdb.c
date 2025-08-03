@@ -470,8 +470,8 @@ qdb_openc(const char *file, const char *database, int mode, unsigned flags, int 
 	char buf[BUFSIZ], *backup_key_tid = key_tid;
 
 	if (file && access(file, R_OK) && (flags & QH_RDONLY)) {
-		qdblog(LOG_ERR, "qdb_openc: The file '%s' was open with RDONLY but isn't readable\n", file);
-		flags |= QH_TMP;
+		qdblog(LOG_ERR, "qdb_openc: The file '%s' was open with RDONLY but isn't readable. Ignoring RDONLY.\n", file);
+		flags &= ~QH_RDONLY;
 	}
 
 	if (!(flags & QH_THRICE))
