@@ -2,14 +2,15 @@ PREFIX ?= /usr/local
 debug := -fsanitize=address -fstack-protector-strong
 pwd != pwd
 prefix := ${pwd} /usr/local
-CFLAGS := ${prefix:%=-I%/include} -g -O3 -Wall -Wextra -Wpedantic
-LDFLAGS	+= -lqdb -ldb ${prefix:%=-L%/lib} ${prefix:%=-Wl,-rpath,%/lib}
+CFLAGS := ${prefix:%=-I%/include} -g -O0 -Wall -Wextra -Wpedantic
+LIB-LDFLAGS :=  ${prefix:%=-L%/lib} -lqmap ${prefix:%=-L%/lib}
+LDFLAGS	+= -lqdb -ldb ${LIB-LDFLAGS} ${prefix:%=-Wl,-rpath,%/lib}
 dirs := bin lib
 
 all: lib/libqdb.so bin/qdb
 
 lib/libqdb.so: libqdb.c include/qdb.h lib
-	${CC} -o $@ libqdb.c ${CFLAGS} -fPIC -shared
+	${CC} -o $@ libqdb.c ${CFLAGS} -fPIC -shared ${LIB-LDFLAGS}
 
 bin/qdb: qdb.c include/qdb.h bin
 	cc -o $@ qdb.c ${CFLAGS} ${LDFLAGS}

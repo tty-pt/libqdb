@@ -18,5 +18,11 @@
     "include",
     "include.mk",
     "Makefile"
-  ]
+  ],
+  "devDependencies": {
+    "@tty-pt/qmap": "^0.0.3"
+  },
+  "peerDependencies": {
+    "@tty-pt/qmap": "^0.0.3"
+  }
 }
