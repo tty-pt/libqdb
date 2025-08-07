@@ -6,4 +6,17 @@ settings:
 
 importers:
 
-  .: {}
+  .:
+    devDependencies:
+      '@tty-pt/qmap':
+        specifier: ^0.0.4
+        version: 0.0.4
+
+packages:
+
+  '@tty-pt/qmap@0.0.4':
+    resolution: {integrity: sha512-Z5S4+YAEckBO/+7gm2ErKxayUPrN2qZWkXgwjTys4HpVQJGe0y1RZHMrjKunCfIY/pWDM/+ZuIGqE+ME9EC3TQ==}
+
+snapshots:
+
+  '@tty-pt/qmap@0.0.4': {}
