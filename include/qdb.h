@@ -23,9 +23,6 @@ enum qdb_type {
 	QDB_REVERSE = 1,
 };
 
-/* associations are made using these callbacks */
-typedef int (*qdb_assoc_t)(void **data, void *key, void *value);
-
 extern qmap_type_t qdb_string, qdb_unsigned;
 extern unsigned types_hd, qdb_min;
 
@@ -36,7 +33,6 @@ struct qdb_config {
 	unsigned flags;
 	DBTYPE type;
 	char *file;
-	DB_ENV *env;
 };
 extern struct qdb_config qdb_config;
 
@@ -62,15 +58,14 @@ enum qdb_flags {
 	QH_AINDEX = QMAP_AINDEX, // 2 - auto-index
 	QH_PGET = QMAP_PGET, // 4 - get = pget
 	QH_TWO_WAY = QMAP_TWO_WAY, // 8 - lookup both ways
-	QH_TXN = 16, // transaction support
-	QH_RDONLY = 32, // it's read-only
-	QH_THREAD = 64, // thread protections
-	QH_SEC = 128, // is secondary (useless?)
-	QH_TMP = 256, // memory only
+	QH_RDONLY = 16, // it's read-only
+	QH_TMP = 32, // is secondary (useless?)
 };
 
 /* open a database (specify much) */
-unsigned qdb_openc(const char *file, const char *database, int mode, unsigned flags, int type, char *key_tid, char *value_tid);
+unsigned qdb_openc(const char *file, const char *database,
+		int mode, unsigned flags, int type,
+		char *key_tid, char *value_tid);
 
 /* get a key or value's length */
 size_t qdb_len(unsigned hd, unsigned type, void *key);
@@ -97,18 +92,15 @@ void qdb_reg(char *key, size_t len);
 void qdb_print(char *target, unsigned hd,
 		unsigned type, void *thing);
 
-inline static
-unsigned qdb_piter(unsigned hd, void *key, unsigned reverse) {
-	if (!(qdb_flags(hd) & QMAP_TWO_WAY))
-		qdblog_err("Database is not TWO WAY");
-
-	return qmap_iter(hd + !reverse, key);
-}
-
 /* open a database (specify little) */
-static inline int qdb_open(char *database, char *key_tid, char *value_tid, unsigned flags) {
-	return qdb_openc(qdb_config.file, database, qdb_config.mode,
-			flags | qdb_config.flags, qdb_config.type, key_tid, value_tid);
+static inline int
+qdb_open(char *database, char *key_tid,
+		char *value_tid, unsigned flags)
+{
+	return qdb_openc(qdb_config.file, database,
+			qdb_config.mode,
+			flags | qdb_config.flags,
+			qdb_config.type, key_tid, value_tid);
 }
 
 /* register a type of key / value */

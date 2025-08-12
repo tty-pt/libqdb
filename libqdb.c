@@ -35,7 +35,6 @@ struct qdb_config qdb_config = {
 	.mode = 0644,
 	.type = DB_HASH,
 	.file = NULL,
-	.env = NULL,
 };
 
 /* in-memory metadata for each db */
@@ -45,15 +44,11 @@ typedef struct meta {
 	qmap_type_t *type[2];
 } qdb_meta_t;
 
-typedef int get_t(DBC *dbc, DBT *key, DBT *pkey,
-		DBT *data, unsigned flags);
-
 typedef struct {
 	unsigned hd;
 	DBT data, key, pkey;
 	DBC *cursor;
 	int flags;
-	get_t *get;
 } qdb_cur_t;
 
 qdb_meta_t qdb_meta[QMAP_MAX];
@@ -110,20 +105,12 @@ qdb_set_logger(log_t logger)
 	qdblog = logger;
 }
 
-static int
-primary_get(DBC *dbc, DBT *key UNUSED, DBT *pkey,
-		DBT *data, unsigned flags)
-{
-	return dbc->get(dbc, pkey, data, flags);
-}
-
 static unsigned
 _qdb_iter(unsigned hd, void *key)
 {
 	unsigned cur_id = idm_new(&qdb_cursor_idm);
 	qdb_cur_t *cur = &qdb_cursors[cur_id];
 	DB *db = qdb_dbs[hd];
-	qdb_meta_t *meta = &qdb_meta[hd];
 
 	cur->hd = hd;
 	cur->cursor = NULL;
@@ -139,10 +126,6 @@ _qdb_iter(unsigned hd, void *key)
 		= cur->data.flags = 0;
 	cur->pkey.size = cur->key.size
 		= key ? qdb_len(hd, QDB_KEY, key) : 0;
-
-	cur->get = (meta->flags & QH_SEC)
-		? cur->cursor->pget
-		: primary_get;
 
 	cur->flags = key ? QH_DUP : 0;
 
@@ -167,7 +150,7 @@ _qdb_next(void *key, void *value, unsigned cur_id)
 		flags = DB_NEXT;
 	cur->flags |= QH_NOT_FIRST;
 
-	ret = cur->get(cur->cursor, &cur->key, &cur->pkey,
+	ret = cur->cursor->get(cur->cursor, &cur->pkey,
 			&cur->data, flags);
 
 	if (ret) {
@@ -181,7 +164,8 @@ _qdb_next(void *key, void *value, unsigned cur_id)
 
 	if (key) {
 		memcpy(key, cur->pkey.data, cur->pkey.size);
-		memcpy(value, cur->data.data, cur->data.size);
+		memcpy(value, cur->data.data,
+				cur->data.size);
 	}
 
 	memset(&cur->key, 0, sizeof(DBT));
@@ -229,15 +213,17 @@ _qdb_openc(unsigned hd, const char *file,
 	qdb_first = 0;
 	meta->flags = flags;
 
-	CBUG(db_create(&db, qdb_config.env, 0),
+	CBUG(db_create(&db, NULL, 0),
 			"db_create\n");
 
 	if (flags & QH_DUP && !(flags & QH_TWO_WAY))
 		CBUG(db->set_flags(db, DB_DUP),
 				"set_flags\n");
 
-	dbflags = qdb_config.flags & QH_THREAD ? DB_THREAD : 0;
-	if (file && access(file, R_OK) == 0 && (flags & QH_RDONLY))
+	dbflags = 0;
+	if (file && access(file, R_OK) == 0
+			&& (flags & QH_RDONLY))
+
 		dbflags |= DB_RDONLY;
 	else
 		dbflags |= DB_CREATE;
@@ -278,7 +264,8 @@ qdb_openc(const char *file, const char *database, int mode,
 	if (flags & QMAP_TWO_WAY) {
 		meta = &qdb_meta[hd + 1];
 		strcpy(meta->type_str[QDB_KEY], value_tid);
-		strcpy(meta->type_str[QDB_VALUE >> 1], key_tid);
+		strcpy(meta->type_str[QDB_VALUE >> 1],
+				key_tid);
 		meta->type[QDB_KEY] = value_type;
 		meta->type[QDB_VALUE >> 1] = key_type;
 	}
@@ -291,72 +278,13 @@ qdb_openc(const char *file, const char *database, int mode,
 	if (flags & QH_TMP)
 		return hd;
 
-	if (!file || (access(file, R_OK) && (flags & QH_RDONLY)))
+	if (!file || (access(file, R_OK)
+				&& (flags & QH_RDONLY)))
 		flags |= QH_TMP;
 
-	return _qdb_openc(hd, file, database, mode, flags, type);
+	return _qdb_openc(hd, file, database,
+			mode, flags, type);
 }
-
-#if 0
-static inline int
-qdb_rem(unsigned hd, void *key_data, void *value_data)
-{
-	DB *db = qdb_dbs[hd];
-	DBT key, data, pkey;
-	DBC *cursor;
-	int ret;
-
-	qdb_meta_t *meta = &qdb_meta[hd];
-
-	if ((ret = db->cursor(db, NULL, &cursor, 0)) != 0) {
-		ERR("db->cursor\n");
-		return ret;
-	}
-
-	memset(&key, 0, sizeof(DBT));
-	memset(&pkey, 0, sizeof(DBT));
-	pkey.data = key.data = key_data;
-	pkey.size = key.size = qdb_len(hd, QDB_KEY, key_data);
-	pkey.flags = key.flags = 0;
-
-	memset(&data, 0, sizeof(DBT));
-	data.flags = 0; /* was DB_DBT_MALLOC */
-	data.data = value_data;
-	data.size = qdb_len(hd, QDB_VALUE, value_data);
-
-	get_t *get = (meta->flags & QH_SEC)
-		? cursor->pget
-		: primary_get;
-
-	if (!(ret = get(cursor, &key, &pkey, &data, DB_GET_BOTH)))
-		ret = cursor->del(cursor, 0);
-
-	cursor->close(cursor);
-	if (ret) {
-		if (ret != DB_NOTFOUND)
-			ERR("get\n");
-	}
-
-	return ret;
-}
-
-static inline void
-qdb_idel(unsigned hd, void *key_r, size_t key_len)
-{
-	DB *db = qdb_dbs[hd];
-	DBT key;
-	int ret;
-
-	memset(&key, 0, sizeof(key));
-
-	key.data = key_r;
-	key.size = key_len;
-
-	ret = db->del(db, NULL, &key, 0);
-
-	CBUG(ret && ret != DB_NOTFOUND);
-}
-#endif
 
 int
 qdb_cdel(unsigned cur_id)
@@ -369,43 +297,6 @@ qdb_cdel(unsigned cur_id)
 	return cur->cursor->c_del(cur->cursor, 0);
 }
 
-#if 0
-static inline void
-qdb_del(unsigned hd, void *key, void *value)
-{
-	qdb_meta_t *meta = &qdb_meta[hd];
-	unsigned c;
-
-	if (value != NULL) {
-		qdb_rem(hd, key, value);
-		return;
-	}
-
-	qmap_type_t *kt = meta->type[QDB_KEY];
-	if (kt == &qdb_unsigned) {
-		if (meta->flags & QH_DUP)
-			goto normal;
-
-		qdb_idel(hd, key, sizeof(unsigned));
-		return;
-	}
-
-normal:
-	c = _qdb_iter(hd, key);
-
-	while (_qdb_next(NULL, NULL, c))
-		qdb_cdel(c);
-}
-#endif
-
-#if 0
-static inline
-void qdb_fin(unsigned cur_id) {
-	qdb_cur_t *cur = &qdb_cursors[cur_id];
-	cur->cursor->close(cur->cursor);
-}
-#endif
-
 size_t qdb_len(unsigned hd, unsigned type, void *key) {
 	if (!key)
 		return 0;
@@ -413,7 +304,9 @@ size_t qdb_len(unsigned hd, unsigned type, void *key) {
 	return qmap_len(hd, key, type);
 }
 
-char *qdb_type(unsigned hd, unsigned type) {
+char *
+qdb_type(unsigned hd, unsigned type)
+{
 	unsigned otype = type;
 	type >>= 1;
 	if (otype & QDB_REVERSE)
@@ -421,7 +314,10 @@ char *qdb_type(unsigned hd, unsigned type) {
 	return qdb_meta[hd].type_str[type];
 }
 
-void qdb_print(char *target, unsigned hd, unsigned type, void *thing) {
+void
+qdb_print(char *target, unsigned hd,
+		unsigned type, void *thing)
+{
 	unsigned otype = type;
 	type >>= 1;
 	if (otype & QDB_REVERSE)
@@ -429,8 +325,8 @@ void qdb_print(char *target, unsigned hd, unsigned type, void *thing) {
 	qmap_print(target, hd, type, thing);
 }
 
-static
-int qdb_putc(unsigned hd, void *key_r, size_t key_len,
+static int
+qdb_putc(unsigned hd, void *key_r, size_t key_len,
 		void *value, size_t value_len)
 {
 	DB *db = qdb_dbs[hd];
@@ -472,11 +368,13 @@ _qdb_put(unsigned hd, void *key, void *value)
 
 	if ((flags & QH_TWO_WAY) && (flags & QH_DUP)) {
 		key_len = qdb_len(hd + 2, QDB_KEY, key);
-		value_len = qdb_len(hd + 2, QDB_VALUE, value);
+		value_len = qdb_len(hd + 2,
+				QDB_VALUE, value);
 		char buf[key_len + value_len];
 		memcpy(buf, key, key_len);
 		memcpy(buf + key_len, value, value_len);
-		return qdb_putc(hd, buf, key_len + value_len, value, value_len);
+		return qdb_putc(hd, buf, key_len + value_len,
+				value, value_len);
 	}
 
 	value_len = qdb_len(hd, QDB_VALUE, value);
@@ -485,17 +383,6 @@ _qdb_put(unsigned hd, void *key, void *value)
 
 	return id;
 }
-
-#if 0
-static unsigned
-qdb_put(unsigned hd, void *key, void *value) {
-	unsigned ret = qmap_put(hd, key, value);
-	qdb_meta_t *meta = &qdb_meta[hd];
-	if (meta->flags & QDB_SYNC)
-		_qdb_put(hd, key, value);
-	return ret;
-}
-#endif
 
 static inline
 void _qdb_sync(unsigned hd)
@@ -541,85 +428,10 @@ qdb_flags(unsigned hd)
 void
 qdb_reg(char *key, size_t len)
 {
-	qmap_type_t *type = (qmap_type_t *) malloc(sizeof(qmap_type_t));
+	qmap_type_t *type = (qmap_type_t *)
+		malloc(sizeof(qmap_type_t));
 	type->measure = NULL;
 	type->len = len;
 	type->print = NULL;
 	qmap_put(types_hd, key, &type);
 }
-
-#if 0
-static
-void *qdb_getc(unsigned hd, size_t *size,
-		void *key_r, size_t key_len)
-{
-	DB *db = qdb_dbs[hd];
-	DBT key, data;
-	int ret;
-
-	memset(&key, 0, sizeof(key));
-	memset(&data, 0, sizeof(data));
-
-	key.data = (void *) key_r;
-	key.size = key_len;
-	data.flags = DB_DBT_MALLOC;
-
-	ret = db->get(db, NULL, &key, &data, 0);
-
-	if (ret == DB_NOTFOUND)
-		return NULL;
-
-	CBUG(ret, "db->get\n");
-
-	*size = data.size;
-	return data.data;
-}
-
-static inline void *
-qdb_pgetc(unsigned hd, size_t *len, void *key_r)
-{
-	unsigned flags = qdb_meta[hd].flags;
-
-	DB *db = qdb_dbs[hd];
-	DBT key, pkey, data;
-	int ret;
-
-	memset(&key, 0, sizeof(key));
-	memset(&pkey, 0, sizeof(pkey));
-	memset(&data, 0, sizeof(data));
-
-	key.data = (void *) key_r;
-	key.size = qdb_len(hd, QDB_KEY, key_r);
-	pkey.flags = data.flags = DB_DBT_MALLOC;
-
-	ret = db->pget(db, NULL, &key, &pkey, &data, 0);
-
-	if (ret == DB_NOTFOUND)
-		return NULL;
-
-	CBUG(ret, "db->pget\n");
-
-	*len = pkey.size;
-	return pkey.data;
-}
-
-static int
-_qdb_get(unsigned hd, void *value, void *key)
-{
-	size_t size;
-	void *value_r;
-
-	if (qdb_meta[hd].flags & QH_PGET)
-		value_r = qdb_pgetc(hd, &size, key);
-	else
-		value_r = qdb_getc(hd, &size, key,
-				qdb_len(hd, QDB_KEY, key));
-
-	if (!value_r)
-		return 1;
-
-	memcpy(value, value_r, size);
-	return 0;
-}
-
-#endif
