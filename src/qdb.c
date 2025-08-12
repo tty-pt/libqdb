@@ -3,7 +3,7 @@
  * - The reverse flag is counter-intuitive. When it is on,
  *   we query for (primary) keys, for example.
  */
-#include "./include/qdb.h"
+#include "./../include/qdb.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -48,6 +48,12 @@ usage(char *prog)
 	fprintf(stderr, "Use '.' as the KEY for all keys!\n");
 }
 
+static inline const char *
+qdb_type(unsigned phd, enum qmap_mbr t, unsigned reverse)
+{
+	return qmap_type(phd, reverse ? !t : t);
+}
+
 static inline void *rec_query(unsigned qhds, char *tbuf, char *buf, unsigned tmprev) {
 	tmprev = (qhds_n & 1) == tmprev;
 	unsigned c2 = qmap_iter(qhds, NULL);
@@ -55,19 +61,20 @@ static inline void *rec_query(unsigned qhds, char *tbuf, char *buf, unsigned tmp
 	unsigned aux, aux_hd;
 	char *aux2;
 
-	char *lktype = qdb_type(prim_hd, QDB_KEY | !reverse);
+	const char *lktype = qdb_type(prim_hd,
+			QMAP_KEY, !reverse);
 
 	while (qmap_next(&aux, &aux_hd, c2)) {
-		if (strcmp(qdb_type(aux_hd, QDB_VALUE | tmprev), lktype))
+		if (strcmp(qdb_type(aux_hd, QMAP_VALUE, tmprev), lktype))
 			tmprev = !tmprev;
-		if (strcmp(qdb_type(aux_hd, QDB_VALUE | tmprev), lktype)) {
+		if (strcmp(qdb_type(aux_hd, QMAP_VALUE, tmprev), lktype)) {
 			// TODO free idml
 			ids_drop(&rqs);
 			fprintf(stderr, "Invalid query sequence\n");
 			qmap_fin(c2);
 			return NULL;
 		}
-		lktype = qdb_type(aux_hd, QDB_KEY | tmprev);
+		lktype = qdb_type(aux_hd, QMAP_KEY, tmprev);
 		ids_push(&rqs, aux_hd + tmprev);
 	}
 
@@ -88,17 +95,22 @@ static inline void *rec_query(unsigned qhds, char *tbuf, char *buf, unsigned tmp
 static inline int gen_cond(int is_value) {
 	unsigned c = qmap_iter(qhds, NULL);
 	unsigned aux, rev = !reverse, aux_hd;
-	char *type = qdb_type(prim_hd, (is_value ? QDB_KEY : QDB_VALUE) | rev);
+	const char *type = qdb_type(prim_hd,
+			is_value ? QMAP_KEY : QMAP_VALUE,
+			rev);
 
 	while (qmap_next(&aux, &aux_hd, c)) {
 		rev = !rev;
-		type = qdb_type(aux_hd, QDB_KEY | rev);
+		type = qdb_type(aux_hd, QMAP_KEY, rev);
 	}
 
 	return !strcmp(type, "s");
 }
 
-inline static char *_gen_lookup(char *buf, char *str, unsigned qhds, unsigned qhds_n, int is_value) {
+inline static char *
+_gen_lookup(char *buf, char *str, unsigned qhds,
+		unsigned qhds_n, int is_value)
+{
 	unsigned cond = gen_cond(is_value);
 	char *ret = NULL;
 
@@ -169,7 +181,8 @@ static inline void assoc_print(void) {
 			printf("-1");
 			continue;
 		}
-		qdb_print(pbuf, aux_hd, QDB_VALUE, alt_buf);
+		qmap_print(pbuf, aux_hd,
+				QMAP_VALUE, alt_buf);
 		printf("%s", pbuf);
 		if (bail)
 			break;
@@ -180,12 +193,14 @@ static inline void _gen_get(void) {
 	char pbuf[BUFSIZ];
 	memset(pbuf, 0, sizeof(pbuf));
 	if (print_keys) {
-		qdb_print(pbuf, prim_hd, QDB_KEY, key_buf);
+		qmap_print(pbuf, prim_hd, QMAP_KEY, key_buf);
 		printf("%s ", pbuf);
-		qdb_print(pbuf, prim_hd, QDB_VALUE, value_buf);
+		qmap_print(pbuf, prim_hd, QMAP_VALUE,
+				value_buf);
 		printf("%s", pbuf);
 	} else {
-		qdb_print(pbuf, prim_hd, qdb_get_type, qdb_get_buf);
+		qmap_print(pbuf, prim_hd, qdb_get_type,
+				qdb_get_buf);
 		printf("%s", pbuf);
 	}
 	assoc_print();
@@ -228,7 +243,7 @@ static void gen_get(char *str) {
 	unsigned nonce = 1;
 
 	qdb_get_buf = value_buf;
-	qdb_get_type = reverse ? QDB_VALUE : QDB_KEY;
+	qdb_get_type = reverse ? QMAP_VALUE : QMAP_KEY;
 
 	if (str && strcmp(str, ".") && !iter_key) {
 		printf("-1\n");
@@ -256,7 +271,7 @@ static void gen_list(void) {
 
 	c = qmap_iter(prim_hd, NULL);
 
-	qdb_get_type = QDB_VALUE;
+	qdb_get_type = QMAP_VALUE;
 	qdb_get_buf = key_buf;
 	aux = print_keys;
 	print_keys = 1;
@@ -277,7 +292,8 @@ static inline void gen_put(void) {
 
 	key = col ? key_buf : NULL;
 	id = qmap_put(prim_hd, key, value_buf);
-	qdb_print(pbuf, prim_hd, QDB_KEY, key ? key : (char *) &id);
+	qmap_print(pbuf, prim_hd, QMAP_KEY,
+			key ? key : (char *) &id);
 	printf("%s\n", pbuf);
 }
 
@@ -349,6 +365,7 @@ main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
+	qmap_init();
 	qdb_init();
 
 	ahds = qdb_open(NULL, "u", "u", QH_AINDEX);
