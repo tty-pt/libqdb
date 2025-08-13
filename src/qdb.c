@@ -9,6 +9,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <qidm.h>
+#include <qmap.h>
 
 unsigned QH_NOT_NEW = 1;
 
