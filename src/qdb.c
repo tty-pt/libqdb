@@ -10,6 +10,11 @@
 #include <unistd.h>
 #include <qidm.h>
 #include <qmap.h>
+#include <qsys.h>
+
+#define DEBUG_LVL 0
+#define DEBUG(lvl, ...) \
+	if (DEBUG_LVL > lvl) WARN(__VA_ARGS__)
 
 unsigned QH_NOT_NEW = 1;
 
@@ -351,6 +356,7 @@ unsigned gen_open(char *fname, unsigned flags) {
 
 	qdb_config.file = buf;
 	qdb_config.mode = flags & QH_RDONLY ? 0644 : 0664;
+	DEBUG(1, "%s\n", buf);
 	return qdb_open("", key_type, value_type, flags | QMAP_TWO_WAY);
 }
 
@@ -417,6 +423,7 @@ main(int argc, char *argv[])
 	case 'r': reverse = !reverse; break;
 	}
 
+	DEBUG(1, "close\n");
 	qdb_close(prim_hd, 0);
 
 	unsigned key;
