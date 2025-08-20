@@ -17,6 +17,17 @@
 #endif
 #include <qmap.h>
 
+#define qdb_iter qmap_iter
+
+typedef size_t qdb_measure_t(const void *thing);
+typedef void qdb_print_t(const void *thing);
+
+typedef struct {
+	size_t len;
+	qdb_measure_t *measure;
+	qdb_print_t *print;
+} qdb_type_t;
+
 /* we have this config object mostly to avoid having
  * to specify much when opening databases */
 struct qdb_config {
@@ -25,27 +36,28 @@ struct qdb_config {
 	DBTYPE type;
 	char *file;
 };
-extern struct qdb_config qdb_config;
 
-/* this is useful for custom logging */
-/* TODO move this to a logging library */
-typedef void (*log_t)(int type, const char *fmt, ...);
-void qdb_set_logger(log_t logger);
+extern struct qdb_config qdb_config;
 
 /* some flags that are useful for us */
 enum qdb_flags {
-	QH_DUP = QMAP_DUP, // 1 - duplicate keys
-	QH_AINDEX = QMAP_AINDEX, // 2 - auto-index
-	QH_PGET = QMAP_PGET, // 4 - get = pget
-	QH_TWO_WAY = QMAP_TWO_WAY, // 8 - lookup both ways
+	QH_AINDEX = QM_AINDEX, // 1 - auto-index
+	QH_MIRROR = QM_MIRROR, // 2 - lookup both ways
+	/* QH_PGET = QM_PGET, // 4 - get = pget */
+	QH_TMP = 8, // is secondary (useless?)
 	QH_RDONLY = 16, // it's read-only
-	QH_TMP = 32, // is secondary (useless?)
+};
+
+enum qdb_mbr {
+	QDB_KEY,
+	QDB_VALUE
 };
 
 /* open a database (specify much) */
-unsigned qdb_openc(const char *file, const char *database,
-		int mode, unsigned flags, int type,
-		char *key_tid, char *value_tid);
+unsigned qdb_openc(qdb_type_t *ktype, qdb_type_t *vtype,
+		unsigned mask, unsigned flags,
+		const char *file, const char *database,
+		int mode, int type);
 
 /* initialize the system */
 void qdb_init(void);
@@ -58,13 +70,17 @@ void qdb_sync(unsigned hd);
 
 /* open a database (specify little) */
 static inline int
-qdb_open(char *database, char *key_tid,
-		char *value_tid, unsigned flags)
+qdb_open(qdb_type_t *ktype, qdb_type_t *vtype,
+		unsigned mask, unsigned flags,
+		char *database)
 {
-	return qdb_openc(qdb_config.file, database,
-			qdb_config.mode,
+	return qdb_openc(ktype, vtype, mask,
 			flags | qdb_config.flags,
-			qdb_config.type, key_tid, value_tid);
+			qdb_config.file, database,
+			qdb_config.mode, qdb_config.type);
 }
+
+unsigned qdb_put(unsigned hd, void *key, void *value);
+void *qdb_get(unsigned hd, void *key);
 
 #endif
