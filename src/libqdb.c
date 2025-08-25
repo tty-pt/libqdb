@@ -11,6 +11,12 @@
 
 #define QM_MAX 1024
 #define LEN_MAX (BUFSIZ * 32)
+#define TYPES_MASK 0xFF
+
+#define DEBUG_LVL 1
+
+#define DEBUG(lvl, ...) \
+	if (DEBUG_LVL > lvl) WARN(__VA_ARGS__)
 
 enum cur_flags {
 	/* this is used for iteration */
@@ -25,10 +31,7 @@ struct qdb_config qdb_config = {
 };
 
 typedef struct {
-	qdb_type_t *ktype, *vtype;
-	size_t ilen;
-	unsigned flags;
-	void *keys, *table;
+	unsigned flags, ktype, vtype;
 	DB *db;
 } qdb_meta_t;
 
@@ -39,29 +42,14 @@ typedef struct {
 	int flags;
 } qdb_cur_t;
 
-qdb_meta_t metas[QM_MAX];
+qdb_meta_t qdbs[QM_MAX];
 static qdb_cur_t qdb_cursors[QM_MAX];
 static idm_t qdb_cursor_idm;
-
-static inline size_t
-qdb_len(qdb_type_t *type, const void *thing) {
-	return type->len
-		? type->len
-		: type->measure(thing);
-}
-
-static inline void *
-qdb_val(unsigned hd, unsigned id) {
-	qdb_meta_t *meta = &metas[hd];
-
-	return ((char *) meta->table)
-			+ meta->ilen * id;
-}
 
 static unsigned
 _qdb_iter(unsigned hd, void *key)
 {
-	qdb_meta_t *meta = &metas[hd];
+	qdb_meta_t *meta = &qdbs[hd];
 	unsigned cur_id = idm_new(&qdb_cursor_idm);
 	qdb_cur_t *cur = &qdb_cursors[cur_id];
 
@@ -78,13 +66,13 @@ _qdb_iter(unsigned hd, void *key)
 	cur->key.flags = cur->pkey.flags
 		= cur->data.flags = 0;
 	cur->pkey.size = cur->key.size
-		= key ? qdb_len(meta->ktype, key) : 0;
+		= key ? qmap_len(meta->ktype, key) : 0;
 
 	return cur_id;
 }
 
 static int
-_qdb_next(void *key, void *value, unsigned cur_id)
+_qdb_next(const void **key, const void **value, unsigned cur_id)
 {
 	qdb_cur_t *cur = &qdb_cursors[cur_id];
 	ssize_t ret;
@@ -108,11 +96,8 @@ _qdb_next(void *key, void *value, unsigned cur_id)
 		return 0;
 	}
 
-	if (key) {
-		memcpy(key, cur->pkey.data, cur->pkey.size);
-		memcpy(value, cur->data.data,
-				cur->data.size);
-	}
+	*key = cur->pkey.data;
+	*value = cur->data.data;
 
 	memset(&cur->key, 0, sizeof(DBT));
 	memset(&cur->pkey, 0, sizeof(DBT));
@@ -125,10 +110,9 @@ void qdb_open_cache(unsigned hd)
 {
 	unsigned cur_id = _qdb_iter(hd, NULL);
 	qdb_cur_t *cur = &qdb_cursors[cur_id];
+	const void *key, *value;
 
-	char key[LEN_MAX], value[LEN_MAX];
-
-	while (_qdb_next(key, value, cur_id))
+	while (_qdb_next(&key, &value, cur_id))
 		qmap_put(cur->hd, key, value);
 }
 
@@ -164,44 +148,52 @@ _qdb_openc(unsigned hd, const char *file,
 				type, dbflags, mode),
 			"open\n");
 
-	metas[hd].db = db;
+	qdbs[hd].db = db;
 	qdb_open_cache(hd);
 
 	return hd;
 }
 
-unsigned
-qdb_openc(qdb_type_t *ktype, qdb_type_t *vtype,
-		unsigned mask, unsigned flags,
-		const char *file, const char *database,
-		int mode, int type)
+static inline void
+qdb_openc_meta(unsigned hd,
+		unsigned ktype_id,
+		unsigned vtype_id,
+		unsigned flags)
 {
 	qdb_meta_t *meta;
+
+	meta = &qdbs[hd];
+
+	if (ktype_id == QM_PTR)
+		flags |= QH_VAL_PTR;
+
+	meta->ktype = ktype_id;
+	meta->vtype = vtype_id;
+	meta->flags = flags;
+}
+
+unsigned
+qdb_openc(const char *file, const char *database,
+		unsigned ktype_id, unsigned vtype_id,
+		unsigned mask, unsigned flags,
+		int mode, int type)
+{
 	unsigned hd;
 
 	if (!file || (access(file, R_OK)
 				&& (flags & QH_RDONLY)))
 		flags |= QH_TMP;
 
-	hd = qmap_open(ktype->len ? QM_HNDL : QM_HASH,
-			vtype->len ? QM_HNDL : QM_HASH,
+	hd = qmap_open(ktype_id,
+			vtype_id,
 			mask, flags);
 
-	meta = &metas[hd];
-	if (!vtype->len)
-		flags |= QH_VAL_PTR;
+	qdb_openc_meta(hd, ktype_id, vtype_id, flags);
 
-	meta->ilen = vtype->len
-		? vtype->len
-		: sizeof(void *);
-
-	meta->table = malloc(meta->ilen * (mask + 1));
-
-#if 0
-	fprintf(stderr, "qdb_openc %u %s %s %u %s %s %u\n",
+	DEBUG(1, "qdb_openc %u %s %s %u %u %u %u\n",
 			hd, file, database,
-			flags, key_tid, value_tid, flags);
-#endif
+			flags, ktype_id, vtype_id, flags);
+
 	if (flags & QH_TMP)
 		return hd;
 
@@ -222,9 +214,9 @@ qdb_cdel(unsigned cur_id)
 
 static int
 qdb_putc(unsigned hd, const void *key_r, size_t key_len,
-		void *value, size_t value_len)
+		const void *value, size_t value_len)
 {
-	DB *db = metas[hd].db;
+	DB *db = qdbs[hd].db;
 	DBT key, data;
 	int ret;
 
@@ -233,7 +225,7 @@ qdb_putc(unsigned hd, const void *key_r, size_t key_len,
 
 	key.data = (void *) key_r;
 	key.size = key_len;
-	data.data = value;
+	data.data = (void *) value;
 	data.size = value_len;
 	data.flags = DB_DBT_MALLOC;
 	u_int32_t flags;
@@ -249,13 +241,13 @@ qdb_putc(unsigned hd, const void *key_r, size_t key_len,
 }
 
 static void
-_qdb_put(unsigned hd, const void *key, void *value)
+_qdb_put(unsigned hd, const void *key, const void *value)
 {
-	qdb_meta_t *meta = &metas[hd];
+	qdb_meta_t *meta = &qdbs[hd];
 	size_t key_len, value_len;
 
-	key_len = qdb_len(meta->ktype, key);
-	value_len = qdb_len(meta->vtype, value);
+	key_len = qmap_len(meta->ktype, key);
+	value_len = qmap_len(meta->vtype, value);
 
 	qdb_putc(hd, key, key_len, value, value_len);
 }
@@ -263,20 +255,17 @@ _qdb_put(unsigned hd, const void *key, void *value)
 static inline
 void _qdb_sync(unsigned hd)
 {
-	unsigned cur_id = qmap_iter(hd, NULL), id;
+	unsigned cur_id = qmap_iter(hd, NULL);
 
-	char key[LEN_MAX];
-	char value[LEN_MAX];
+	const void *key, *value;
 
-	while (qmap_next(&id, cur_id))
-		_qdb_put(hd, qmap_key(hd, id),
-				qdb_val(hd, id) 
-			);
+	while (qmap_next(&key, &value, cur_id))
+		_qdb_put(hd, key, value);
 
 	cur_id = _qdb_iter(hd, NULL);
-	while (_qdb_next(key, value, cur_id)) {
-		unsigned id = qmap_get(hd, key);
-		if (id == QM_MISS)
+	while (_qdb_next(&key, &value, cur_id)) {
+		const void *evalue = qmap_get(hd, key);
+		if (!evalue)
 			qdb_cdel(cur_id);
 	}
 }
@@ -284,7 +273,7 @@ void _qdb_sync(unsigned hd)
 void
 qdb_sync(unsigned hd)
 {
-	DB *db = metas[hd].db;
+	DB *db = qdbs[hd].db;
 	_qdb_sync(hd);
 	db->sync(db, 0);
 }
@@ -292,38 +281,10 @@ qdb_sync(unsigned hd)
 void
 qdb_close(unsigned hd, unsigned flags)
 {
-	qdb_meta_t *meta = &metas[hd];
+	qdb_meta_t *meta = &qdbs[hd];
 	if (!(meta->flags & (QH_RDONLY | QH_TMP)))
 		_qdb_sync(hd);
 	qmap_close(hd);
 	meta->db->close(meta->db, flags);
 	meta->db = NULL;
-}
-
-unsigned
-qdb_put(unsigned hd, void *key, void *value)
-{
-	qdb_meta_t *meta = &metas[hd];
-	unsigned id;
-
-	id = qmap_put(hd, key, value);
-
-	if (meta->flags & QH_VAL_PTR)
-		value = &value;
-
-	memcpy(qdb_val(hd, id),
-			value, meta->ilen);
-
-	return id;
-}
-
-void *
-qdb_get(unsigned hd, void *key)
-{
-	unsigned id = qmap_get(hd, key);
-
-	if (id == QM_MISS)
-		return NULL;
-
-	return qdb_val(hd, id);
 }
