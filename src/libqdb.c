@@ -42,9 +42,10 @@ typedef struct {
 	int flags;
 } qdb_cur_t;
 
-qdb_meta_t qdbs[QM_MAX];
+static qdb_meta_t qdbs[QM_MAX];
 static qdb_cur_t qdb_cursors[QM_MAX];
 static idm_t qdb_cursor_idm;
+static ids_t qdb_hds;
 
 static unsigned
 _qdb_iter(unsigned hd, void *key)
@@ -116,15 +117,6 @@ void qdb_open_cache(unsigned hd)
 		qmap_put(cur->hd, key, value);
 }
 
-void
-qdb_init(void)
-{
-	qdb_config.mode = 0644;
-	qdb_config.type = DB_HASH;
-	qdb_config.file = NULL;
-	qdb_config.flags = 0;
-}
-
 unsigned
 _qdb_openc(unsigned hd, const char *file,
 		const char *database, int mode,
@@ -150,6 +142,7 @@ _qdb_openc(unsigned hd, const char *file,
 
 	qdbs[hd].db = db;
 	qdb_open_cache(hd);
+	ids_push(&qdb_hds, hd);
 
 	return hd;
 }
@@ -287,4 +280,29 @@ qdb_close(unsigned hd, unsigned flags)
 	qmap_close(hd);
 	meta->db->close(meta->db, flags);
 	meta->db = NULL;
+	ids_free(&qdb_hds, hd);
+}
+
+static void qdb_at_exit() {
+	idsi_t *cur = ids_iter(&qdb_hds);
+	unsigned hd;
+
+	while (ids_next(&hd, &cur)) {
+		qdb_meta_t *meta = &qdbs[hd];
+
+		if (meta->flags & (QH_RDONLY | QH_TMP))
+			continue;
+
+		qdb_close(hd, 0);
+	}
+}
+
+void
+qdb_init(void)
+{
+	atexit(qdb_at_exit);
+	qdb_config.mode = 0644;
+	qdb_config.type = DB_HASH;
+	qdb_config.file = NULL;
+	qdb_config.flags = 0;
 }
