@@ -476,7 +476,6 @@ main(int argc, char *argv[])
 	static char *optstr = "kxla:q:p:d:g:rR:L:?";
 	char *fname = argv[argc - 1], ch;
 	unsigned flags = QH_RDONLY, aux;
-	const void *key, *value;
 
 	if (argc < 2) {
 		usage(*argv);
@@ -545,22 +544,4 @@ main(int argc, char *argv[])
 
 	DEBUG(1, "close\n");
 	qdb_close(prim_hd, 0);
-
-	unsigned aux_hd, aqs_hd, c;
-
-	aqs_hd = aqs[AQ_A].hd;
-	c = qmap_iter(aqs_hd, NULL);
-
-	while (qmap_next(&key, &value, c)) {
-		aux_hd = * (unsigned *) value;
-		qdb_close(aux_hd, 0);
-	}
-
-	aqs_hd = aqs[AQ_Q].hd;
-	c = qmap_iter(aqs_hd, NULL);
-
-	while (qmap_next(&key, &value, c)) {
-		aux_hd = * (unsigned *) value;
-		qdb_close(aux_hd, 0);
-	}
 }

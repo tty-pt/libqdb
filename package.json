@@ -1,6 +1,6 @@
 {
   "name": "@tty-pt/qdb",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "C lib for easy database usage",
   "main": "index.js",
   "scripts": {
@@ -21,12 +21,12 @@
   ],
   "devDependencies": {
     "@tty-pt/mk": "^0.1.16",
-    "@tty-pt/qmap": "^0.2.1",
+    "@tty-pt/qmap": "^0.2.2",
     "@tty-pt/qsys": "^0.0.10"
   },
   "peerDependencies": {
     "@tty-pt/mk": "^0.1.16",
-    "@tty-pt/qmap": "^0.2.0",
+    "@tty-pt/qmap": "^0.2.2",
     "@tty-pt/qsys": "^0.0.10"
   }
 }
