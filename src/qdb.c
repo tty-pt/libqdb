@@ -541,7 +541,4 @@ main(int argc, char *argv[])
 	case 'g': gen_get(optarg); break;
 	case 'r': reverse = !reverse; break;
 	}
-
-	DEBUG(1, "close\n");
-	qdb_close(prim_hd, 0);
 }
