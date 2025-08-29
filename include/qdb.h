@@ -43,9 +43,6 @@ unsigned qdb_openc(const char *file, const char *database,
 		unsigned mask, unsigned flags,
 		int mode, int type);
 
-/* initialize the system */
-void qdb_init(void);
-
 /* close a database */
 void qdb_close(unsigned hd, unsigned flags);
 

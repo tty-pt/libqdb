@@ -283,7 +283,8 @@ qdb_close(unsigned hd, unsigned flags)
 	ids_free(&qdb_hds, hd);
 }
 
-static void qdb_at_exit() {
+__attribute__((destructor)) static void
+qdb_exit() {
 	idsi_t *cur = ids_iter(&qdb_hds);
 	unsigned hd;
 
@@ -297,10 +298,9 @@ static void qdb_at_exit() {
 	}
 }
 
-void
+__attribute__((constructor)) static void
 qdb_init(void)
 {
-	atexit(qdb_at_exit);
 	qdb_config.mode = 0644;
 	qdb_config.type = DB_HASH;
 	qdb_config.file = NULL;

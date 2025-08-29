@@ -482,8 +482,6 @@ main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
-	qmap_init();
-	qdb_init();
 	qdbe_u = qmap_reg(sizeof(unsigned));
 	types[QM_HNDL].print = u_print;
 	types[QM_STR].print = s_print;
