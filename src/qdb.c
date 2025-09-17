@@ -109,7 +109,7 @@ static inline const void *rec_query(
 		unsigned tmprev)
 {
 	tmprev = (aqs[AQ_Q].n & 1) == tmprev;
-	unsigned c2 = qmap_iter(aqs[aq].hd, NULL);
+	unsigned c2 = qmap_iter(aqs[aq].hd, NULL, 0);
 	ids_t rqs = ids_init();
 	unsigned aux_hd;
 	const void *key, *value, *aux2;
@@ -156,7 +156,7 @@ static inline const void *rec_query(
 
 static inline int gen_cond(int is_value) {
 	unsigned aq_hd = aqs[AQ_Q].hd;
-	unsigned c = qmap_iter(aq_hd, NULL);
+	unsigned c = qmap_iter(aq_hd, NULL, 0);
 	unsigned rev = !reverse;
 	unsigned type = qdbe_type(prim_hd,
 			is_value ? KEY : VALUE,
@@ -241,7 +241,7 @@ static inline void assoc_print(void) {
 	const void *buf = reverse ? value_ptr : key_ptr;
 	unsigned aux_hd;
 	unsigned aq_hd = aqs[AQ_A].hd;
-	unsigned c2 = qmap_iter(aq_hd, NULL);
+	unsigned c2 = qmap_iter(aq_hd, NULL, 0);
 	const void *key, *value;
 
 	while (qmap_next(&key, &value, c2)) {
@@ -282,7 +282,7 @@ static inline void gen_rand(void) {
 	unsigned c;
 	const void *iter_key = gen_lookup(optarg);
 
-	c = qmap_iter(prim_hd + !reverse, iter_key);
+	c = qmap_iter(prim_hd + !reverse, iter_key, 0);
 
 	while (qmap_next(&key_ptr, &value_ptr, c))
 		if (assoc_exists(key_ptr))
@@ -294,7 +294,7 @@ static inline void gen_rand(void) {
 	}
 
 	rand = random() % count;
-	c = qmap_iter(prim_hd + !reverse, iter_key);
+	c = qmap_iter(prim_hd + !reverse, iter_key, 0);
 
 	while (qmap_next(&key_ptr, &value_ptr, c))
 		if (!assoc_exists(key_ptr))
@@ -327,7 +327,7 @@ static void gen_get(char *str) {
 	}
 
 	hd = prim_hd + !reverse;
-	c = qmap_iter(hd, iter_key);
+	c = qmap_iter(hd, iter_key, 0);
 
 	while (qmap_next(&key, &value_ptr, c)) {
 		if (reverse)
@@ -354,7 +354,7 @@ static void gen_list(void) {
 	gen_lookup(NULL);
 	cond = gen_cond(1);
 
-	c = qmap_iter(prim_hd, NULL);
+	c = qmap_iter(prim_hd, NULL, 0);
 
 	qdb_get_type = VALUE;
 	qdb_get_ptr = &key_ptr;
@@ -391,10 +391,10 @@ static inline void gen_list_missing(void) {
 		return;
 	}
 
-	c = qmap_iter(prim_hd + !reverse, NULL);
+	c = qmap_iter(prim_hd + !reverse, NULL, 0);
 	while (qmap_next(&key_ptr, &value_ptr, c)) {
 		unsigned aqs_hd = aqs[AQ_Q].hd;
-		unsigned c2 = qmap_iter(aqs_hd, NULL);
+		unsigned c2 = qmap_iter(aqs_hd, NULL, 0);
 		const void *skey, *sval;
 
 		while (qmap_next(&skey, &sval, c2)) {

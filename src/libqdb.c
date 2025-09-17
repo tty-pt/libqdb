@@ -248,7 +248,7 @@ _qdb_put(unsigned hd, const void *key, const void *value)
 static inline
 void _qdb_sync(unsigned hd)
 {
-	unsigned cur_id = qmap_iter(hd, NULL);
+	unsigned cur_id = qmap_iter(hd, NULL, 0);
 
 	const void *key, *value;
 
