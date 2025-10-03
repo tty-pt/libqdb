@@ -1,0 +1,28 @@
+name: ci
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    uses: tty-pt/ci/.github/workflows/all-in-one.yml@main
+    with:
+      name: libqdb
+      deps: "libqmap,libdb-dev"
+      deps_apk: "libqmap,db-dev"
+      deps_pacman: "libqmap,db"
+      deps_rpm: "libqmap,libdb-devel"
+      deps_brew: "libqmap,db"
+      deps_openbsd: "libqmap,db-4.6.21p7v0"
+    secrets:
+      HOST: ${{ secrets.OPENBSD_HOST }}
+      USER: ${{ secrets.OPENBSD_USER }}
+      SSH_KEY: ${{ secrets.OPENBSD_SSH_KEY }}
+      GPG_PRIVATE_KEY: ${{ secrets.OPENBSD_GPG_PRIVATE_KEY }}
+      GPG_PASSPHRASE: ${{ secrets.OPENBSD_GPG_PASSPHRASE }}
+      GPG_KEYID: ${{ secrets.OPENBSD_GPG_KEY_ID }}
+      ABUILD_PRIVATE_KEY: ${{ secrets.ABUILD_PRIVATE_KEY }}
+      ABUILD_PUBLIC_KEY: ${{ secrets.ABUILD_PUBLIC_KEY }}
+      TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
