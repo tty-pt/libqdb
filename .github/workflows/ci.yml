@@ -16,6 +16,7 @@ jobs:
       deps_rpm: "libqmap,libdb-devel"
       deps_brew: "libqmap,db"
       deps_openbsd: "libqsys,libqmap,db-4.6.21p7v0"
+      publish_to: "deb,apk,pacman,rpm,brew,openbsd"
     secrets:
       HOST: ${{ secrets.OPENBSD_HOST }}
       USER: ${{ secrets.OPENBSD_USER }}

@@ -7,7 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
-#include <sys/queue.h>
+#include <ttypt/queue.h>
 #include <sys/types.h>
 #include <syslog.h>
 #ifdef __OpenBSD__
@@ -15,7 +15,7 @@
 #else
 #include <db.h>
 #endif
-#include <qmap.h>
+#include <ttypt/qmap.h>
 
 /* we have this config object mostly to avoid having
  * to specify much when opening databases */

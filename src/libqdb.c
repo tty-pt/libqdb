@@ -1,13 +1,13 @@
-#include "./../include/qdb.h"
+#include "./../include/ttypt/qdb.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <string.h>
-#include <sys/queue.h>
-#include <qmap.h>
-#include <qidm.h>
-#include <qsys.h>
+#include <ttypt/queue.h>
+#include <ttypt/qmap.h>
+#include <ttypt/idm.h>
+#include <ttypt/qsys.h>
 
 #define QM_MAX 1024
 #define LEN_MAX (BUFSIZ * 32)
