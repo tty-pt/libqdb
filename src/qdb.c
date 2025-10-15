@@ -3,14 +3,14 @@
  * - The reverse flag is counter-intuitive. When it is on,
  *   we query for (primary) keys, for example.
  */
-#include "./../include/qdb.h"
+#include "./../include/ttypt/qdb.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 #include <unistd.h>
-#include <qidm.h>
-#include <qmap.h>
-#include <qsys.h>
+#include <ttypt/idm.h>
+#include <ttypt/qmap.h>
+#include <ttypt/qsys.h>
 
 #define DEBUG_LVL 0
 #define DEBUG(lvl, ...) \

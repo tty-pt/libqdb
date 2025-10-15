@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    uses: tty-pt/ci/.github/workflows/all-in-one.yml@main
+    uses: tty-pt/ci/.github/workflows/all-in-one.yml@msys
     with:
       name: libqdb
       deps: "libqmap,libdb-dev"
@@ -16,6 +16,7 @@ jobs:
       deps_rpm: "libqmap,libdb-devel"
       deps_brew: "libqmap,db"
       deps_openbsd: "libqsys,libqmap,db-4.6.21p7v0"
+      deps_msys: "libqmap,mingw-w64-x86_64-libdb"
     secrets:
       HOST: ${{ secrets.OPENBSD_HOST }}
       USER: ${{ secrets.OPENBSD_USER }}
