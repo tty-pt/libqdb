@@ -1,10 +1,7 @@
-LIB-LDLIBS := -lqmap -ldb -lqsys
-LDLIBS := -lqsys
-LIB := qdb
-INSTALL-BIN := qdb
+all := libqdb qdb
+LDLIBS-libqdb := -lqmap -ldb -lqsys
+LDLIBS-qdb := -lqdb -lqmap -lqsys
+add-prefix-Darwin := $(shell brew --prefix berkeley-db)
 CFLAGS := -g
-prefix-Darwin := $(shell brew --prefix berkeley-db)
-
-npm-lib := @tty-pt/qsys @tty-pt/qmap
 
 -include ../mk/include.mk
